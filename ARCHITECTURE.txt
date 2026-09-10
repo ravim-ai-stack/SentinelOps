@@ -1,0 +1,183 @@
+SENTINELOPS - TECHNICAL ARCHITECTURE
+=====================================
+
+A Databricks Unity Catalog governance dashboard: catalog exploration,
+access risk scoring, and PII discovery, read live off
+system.information_schema, the Unity Catalog REST API, and SCIM.
+Two tiers, no datastore, no cache, no auth layer of its own.
+
+At a glance: 2 tiers (static HTML + FastAPI) | 5 live HTTP endpoints |
+0 app-owned datastores | 1 external system of record.
+
+
+SECTION 1 - LAYERED STACK AND REQUEST PATH
+-------------------------------------------
+
+Browser - ui.html
+  |  fetch('/api/...')  <->  JSON
+  v
+FastAPI - backend/main.py       <-- no auth layer (any client on :3001
+  |                                  sees full PII/access data)
+  |  run_query() / rest_get_all() / scim_get_all()
+  v
+databricks_client.py             <-- .env: DATABRICKS_HOST/TOKEN/
+  |                                  WAREHOUSE_ID (static PAT)
+  |  SQL over PAT / REST+SCIM Bearer
+  v
+Databricks workspace (external system of record)   <-- no cache: every
+  |                                                     request re-scans live
+  +- SQL Warehouse   - information_schema.{catalogs, tables, columns,
+  |                     *_privileges}
+  +- Unity Catalog REST - /api/2.1/unity-catalog/models
+  +- SCIM 2.0        - /scim/v2/Users, /scim/v2/Groups
+
+Every dashboard load re-executes this whole chain - nothing is cached,
+pooled, or persisted anywhere in the path.
+
+
+SECTION 2 - LAYER DETAIL
+-------------------------
+
+1. PRESENTATION
+   File: ui.html - single static file, ~1,500 lines
+   Vanilla HTML/CSS/JS, no framework or bundler. Five client-routed
+   "pages" toggled with a .hidden class: Dashboard, Catalog Explorer,
+   Access Governance, Job Intelligence, Data Security.
+   - Live pages: Catalog Explorer and Access Governance fetch() the
+     backend and render server-computed data (search box, access
+     drill-down drawer).
+   - Mock pages: Dashboard and Job Intelligence render hardcoded
+     numbers; no endpoint backs them yet.
+   - Serving: opened as file://.../ui.html via the backend's
+     webbrowser.open(); not served by any web server, which is why
+     CORS is wide open.
+
+2. APPLICATION / API
+   File: backend/main.py
+   FastAPI on Uvicorn, one process, 127.0.0.1:3001. Business logic -
+   tree assembly, risk scoring, PII classification - lives inline in
+   route handlers; no separate service layer.
+   - Routes: GET /api/health, /api/catalog/tree,
+     /api/catalog/{catalog}/access, /api/access/overview,
+     /api/security/overview
+   - Risk scoring is rule-based: _is_broad() flags ALL_PRIVILEGES/
+     MODIFY or catalog-level grants; _is_sensitive() matches object
+     paths against a keyword list.
+   - PII classification (classify_column) is a regex match on COLUMN
+     NAMES against 7 categories - no content scanning.
+   - Only middleware is CORS (allow_origins=["*"]). Three named
+     loggers exist (catalog/access/security) but nothing structured
+     or shipped anywhere.
+
+3. INTEGRATION / DATA ACCESS
+   File: backend/databricks_client.py
+   A thin wrapper, three call patterns, each hitting Databricks
+   directly with no indirection above it.
+   - run_query() - opens a fresh databricks-sql-connector connection
+     per call against a SQL Warehouse (/sql/1.0/warehouses/{id}),
+     closes it after.
+   - rest_get_all() - paginated REST GET, Bearer auth, follows
+     next_page_token.
+   - scim_get_all() - paginated SCIM 2.0 GET, follows startIndex/
+     totalResults.
+   - No connection pooling, no caching, no retry/backoff - a
+     transient 5xx surfaces as an unhandled exception up through
+     FastAPI.
+
+4. EXTERNAL DATA - DATABRICKS UNITY CATALOG
+   Not owned by this app; the only system of record.
+   - system.information_schema.{catalogs, schemata, tables, routines,
+     volumes, columns, catalog_privileges, schema_privileges,
+     table_privileges, volume_privileges}
+   - Unity Catalog REST - /api/2.1/unity-catalog/models (skipped
+     gracefully if UC model registry is off)
+   - SCIM 2.0 - /scim/v2/Users, /scim/v2/Groups
+
+5. CONFIGURATION / SECRETS
+   File: backend/.env (gitignored)
+   DATABRICKS_HOST, DATABRICKS_TOKEN, DATABRICKS_WAREHOUSE_ID, loaded
+   via python-dotenv at import time. Auth to Databricks is a single
+   static personal access token - no OAuth, no service principal, no
+   rotation.
+
+6. DEPLOYMENT / RUNTIME
+   Single-machine, dev-mode only. python main.py boots Uvicorn and a
+   threading.Timer auto-opens ui.html in the default browser. No
+   containerization, no process manager, no reverse proxy, no TLS.
+
+
+SECTION 3 - WORKED REQUEST: GET /api/access/overview
+------------------------------------------------------
+
+The most expensive endpoint: every load fans out to six live external
+calls before scoring a single user.
+
+  # | Hop                        | Call                              | Notes
+  --|----------------------------|------------------------------------|------------------------------
+  1 | Browser -> FastAPI         | fetch('/api/access/overview')     | no auth header sent or checked
+  2 | fetch_scim_users()         | scim_get_all(/scim/v2/Users)      | paginated, 100/page
+  3 | fetch_scim_groups()        | scim_get_all(/scim/v2/Groups)     | includes member lists
+  4 | fetch_grants()             | 4x run_query() - catalog/schema/  | 4 separate SQL Warehouse
+    |                            | table/volume privileges           | connections
+  5 | compute_user_access /      | in-process                        | rule-based risk scoring,
+    | compute_group_summaries    |                                    | no ML
+  6 | FastAPI -> Browser         | JSON response                      | users, groups, grants, risk
+    |                            |                                    | buckets
+
+
+SECTION 4 - DATA SURFACE PER ENDPOINT
+----------------------------------------
+
+  Endpoint                      | Databricks resources                          | Protocol
+  -------------------------------|------------------------------------------------|-----------
+  /api/catalog/tree              | catalogs, schemata, tables, routines,         | SQL + REST
+                                  | volumes + UC models                           |
+  /api/catalog/{c}/access        | catalog_privileges + SCIM Users/Groups        | SQL + SCIM
+  /api/access/overview           | *_privileges (4 levels) + SCIM Users/Groups   | SQL + SCIM
+  /api/security/overview         | columns, tables, *_privileges + SCIM          | SQL + SCIM
+                                  | Users/Groups                                  |
+
+
+SECTION 5 - CURRENT VS. TARGET STATE
+----------------------------------------
+
+Three deltas carry the weight of a redesign:
+
+  1. + Auth / SSO session in front of FastAPI (OAuth or reverse-proxy
+     SSO) - closes the open-to-anyone gap.
+  2. + Scheduled snapshot / cache layer between Integration and
+     Databricks - stops re-scanning information_schema on every click.
+  3. + Postgres (history, job-run facts) and a system.lakeflow-backed
+     Job Intelligence route - gives Dashboard/Job Intelligence real
+     data and enables trend-over-time views.
+
+Gaps today:
+
+  [Security] No auth on the API
+    allow_origins=["*"] plus zero auth middleware means anyone
+    reaching port 3001 gets full PII and access-grant data.
+
+  [Security] Static PAT, no rotation
+    One long-lived personal access token in .env; no service
+    principal, no secret manager, no expiry handling.
+
+  [Scale] No caching or materialization
+    Every page load re-runs the full information_schema scan. Fine
+    at 10 tables; won't hold at 10,000.
+
+  [Feature] Job Intelligence has no backend
+    Nothing in main.py queries job-run tables; that page and the
+    Dashboard render static numbers.
+
+
+SECTION 6 - FILE MAP
+----------------------
+
+  sentinalops/
+  |- backend/
+  |  |- main.py              (FastAPI app, routes, risk + PII logic)
+  |  |- databricks_client.py (SQL / REST / SCIM wrapper)
+  |  |- requirements.txt     (fastapi, uvicorn, databricks-sql-connector...)
+  |  |- .env.example
+  |  `- .env                 (gitignored - PAT lives here)
+  `- ui.html                  (entire frontend, single file)
