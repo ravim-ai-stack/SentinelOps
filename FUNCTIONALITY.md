@@ -7,10 +7,13 @@ system layout.
 **Category tags:** `metadata` (structural inventory), `governance` (who can access
 what), `risk_scoring` (rule-based risk flags), `ai_context` (sensitivity / root-cause
 narrative signals), `usage_analytics` (access-frequency ranking), `job_monitoring`
-(job run health — currently mock).
+(job run health).
 
-22 of 28 panels are live; the 6 Job Intelligence panels are mock (no job-run data
-source is queried anywhere in this backend yet — see `ARCHITECTURE.txt`).
+All 28 panels are live. The 6 Job Intelligence panels read job-run history from
+`system.lakeflow.job_run_timeline` and job name/tags from the Jobs REST API
+(`job_service.py`); the Job details drawer additionally generates a real AI root
+cause analysis on demand, per failed run, via a Databricks Model Serving endpoint
+(`rca_service.py`, `MODEL_NAME` env var) — see the Job Intelligence section below.
 
 ---
 
@@ -45,16 +48,16 @@ source is queried anywhere in this backend yet — see `ARCHITECTURE.txt`).
 | Grants | `governance` | `access_governance/grants.py` | Live — grants | No logic — flattens the 4 raw privilege tables (catalog/schema/table/volume) into one `{grantee, level, object, privilege}` list. |
 | Effective Access | `governance` | `access_governance/effective_access.py` | Live — grants | For one chosen user: resolves their group memberships, scans all grants, tags each match as "Direct" or "Group: `<name>`", sorted by object. |
 
-## Job Intelligence — 100% mock, no computation
+## Job Intelligence
 
 | Module | Tag | Backend file | Data source | Behind the scenes |
 |---|---|---|---|---|
-| Stats | `job_monitoring` | `job_intelligence/stats.py` | Mock | Fixed dict: total/success/failed/running/RCA counts. No query. |
-| Run Status | `job_monitoring` | `job_intelligence/run_status.py` | Mock | Fixed dict: total/success/failed/cancelled for the donut. No query. |
-| Failures by Cause | `ai_context` | `job_intelligence/failures_by_cause.py` | Mock | Fixed list of 5 named causes with counts. No correlation to any real run data. |
-| Runs Trend | `job_monitoring` | `job_intelligence/runs_trend.py` | Mock | Fixed 7-point daily series. No query. |
-| Failed Jobs | `job_monitoring` | `job_intelligence/failed_jobs.py` | Mock | Fixed list of 6 fictional job records (name, tag, duration, root cause text). |
-| Job Details | `ai_context` | `job_intelligence/job_details.py` | Mock | Fixed drawer payload (overview, root cause + confidence, stack trace, 3 recommended actions) — identical regardless of which job row is clicked. |
+| Stats | `job_monitoring` | `job_intelligence/stats.py` | Live — `system.lakeflow.job_run_timeline` + Jobs REST API | `summarize_run_status(fetch_job_runs(30))` for total/success/failed; `fetch_running_job_count()` (runs with no terminal `result_state` yet) for running jobs; RCA-generated count comes from how many failed runs have had a root cause analysis generated so far this session (`rca_store`). |
+| Run Status | `job_monitoring` | `job_intelligence/run_status.py` | Live — `system.lakeflow.job_run_timeline` | Same 30-day job-run query and bucketing as the Dashboard's Job Health Overview donut. |
+| Failures by Cause | `job_monitoring` | `job_intelligence/failures_by_cause.py` | Live — `system.lakeflow.job_run_timeline` | Buckets failed runs from the last 30 days by their Databricks `termination_code` (mapped to a short label), top 5 by count — a cheap heuristic over real failure data, distinct from the full AI RCA. |
+| Runs Trend | `job_monitoring` | `job_intelligence/runs_trend.py` | Live — `system.lakeflow.job_run_timeline` | Same 14-day daily trend query as the Dashboard's Jobs Trend panel. |
+| Jobs table | `job_monitoring` | `job_intelligence/job_runs.py` | Live — `system.lakeflow.job_run_timeline` + Jobs REST API | Every run (any status) from the last 30 days, joined to job name/tags via `fetch_job_registry()` (Jobs REST API `/api/2.1/jobs/list`). The UI's Status filter defaults to "Failed" so the table shows only failures out of the box, but Success/Cancelled can be picked to widen it. Root cause/RCA status are only meaningful for failed rows (full AI summary once generated and cached — "Completed" — otherwise a termination-code heuristic label, "Pending"); non-failed rows show "—". Each row's id is its `run_id`. |
+| Job Details | `ai_context` | `job_intelligence/job_details.py`, `rca_service.py` | Live — Jobs REST API + Model Serving | On first "View details" for a run, fetches the run and its failed tasks' error output (`/api/2.1/jobs/runs/get`, `/api/2.1/jobs/runs/get-output`) and asks the `MODEL_NAME` serving endpoint for a root cause, fix steps and confidence score; falls back to the run's own state message/error text if no model is configured or the call fails. Cached per `run_id` (`rca_store.py`) so reopening a run doesn't regenerate it. |
 
 ## Data Security
 

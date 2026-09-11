@@ -278,17 +278,17 @@
           </div>
           <div id="jobs-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
           <div class="stat-row" style="grid-template-columns:repeat(5,1fr);">
-            <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8V4Z"/></svg></div></div><div><div class="stat-label">Total job runs</div><div class="stat-num" id="jobs-stat-total">–</div><div class="stat-delta neutral">Sample</div></div></div>
-            <div class="card stat"><div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg></div></div><div><div class="stat-label">Successful runs</div><div class="stat-num" id="jobs-stat-success">–</div><div class="stat-delta neutral">Sample</div></div></div>
-            <div class="card stat"><div class="stat-top"><div class="icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div></div><div><div class="stat-label">Failed runs</div><div class="stat-num" id="jobs-stat-failed">–</div><div class="stat-delta neutral">Sample</div></div></div>
-            <div class="card stat"><div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.6 2.6"/></svg></div></div><div><div class="stat-label">Running jobs</div><div class="stat-num" id="jobs-stat-running">–</div><div class="stat-delta neutral">Sample</div></div></div>
-            <div class="card stat"><div class="stat-top"><div class="icon pink"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg></div></div><div><div class="stat-label">RCA generated</div><div class="stat-num" id="jobs-stat-rca">–</div><div class="stat-delta neutral">Sample</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8V4Z"/></svg></div></div><div><div class="stat-label">Total job runs</div><div class="stat-num" id="jobs-stat-total">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg></div></div><div><div class="stat-label">Successful runs</div><div class="stat-num" id="jobs-stat-success">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div></div><div><div class="stat-label">Failed runs</div><div class="stat-num" id="jobs-stat-failed">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.6 2.6"/></svg></div></div><div><div class="stat-label">Running jobs</div><div class="stat-num" id="jobs-stat-running">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon pink"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg></div></div><div><div class="stat-label">RCA generated</div><div class="stat-num" id="jobs-stat-rca">–</div><div class="stat-delta neutral">Live</div></div></div>
           </div>
 
           <div class="panel-row cols-3">
             <div class="card">
               <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V11M12 20V4M20 20v-7"/></svg> Job run status</div>
-              <div class="panel-sub" style="margin:2px 0 0 26px;">Sample data — job run history isn't wired up yet</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — job runs in the last 30 days</div>
               <div class="donut-wrap" style="margin-top:12px;">
                 <div class="donut" id="jobs-runstatus-donut" style="width:120px;height:120px;">
                   <div class="donut-hole" style="width:78px;height:78px;"><b id="jobs-runstatus-total" style="font-size:18px;">–</b><span style="font-size:10px;">Total runs</span></div>
@@ -298,12 +298,12 @@
             </div>
             <div class="card">
               <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg> Failures by root cause</div>
-              <div class="panel-sub" style="margin:2px 0 0 26px;">Sample data — job run history isn't wired up yet</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — failed runs in the last 30 days, by termination code</div>
               <div class="hbars" id="jobs-failure-causes" style="margin-top:14px;"></div>
             </div>
             <div class="card">
               <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg> Job runs trend</div>
-              <div class="panel-sub" style="margin:2px 0 0 26px;">Sample data — job run history isn't wired up yet</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — job runs per day, last 14 days</div>
               <svg viewBox="0 0 260 130" width="100%" height="130" style="margin-top:10px;" id="jobs-trend-svg"></svg>
               <div class="chart-legend" style="margin-top:6px;">
                 <div class="legend-row"><span class="dot" style="background:var(--green)"></span>Success</div>
@@ -315,19 +315,34 @@
 
           <div class="card">
             <div class="panel-head">
-              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg> Jobs (Failed Runs Only)</div>
-              <div class="tbl-tools"><input class="search" id="jobs-search" placeholder="Search jobs..."></div>
+              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg> Jobs</div>
+              <div class="tbl-tools" style="position:relative;">
+                <button class="btn" id="jobs-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+                <input class="search" id="jobs-search" placeholder="Search jobs...">
+                <div class="filter-panel hidden" id="jobs-filter-panel">
+                  <div class="filter-row">
+                    <label>Tag</label>
+                    <select id="jobs-filter-tag"><option value="">All tags</option></select>
+                  </div>
+                  <div class="filter-row">
+                    <label>Status</label>
+                    <select id="jobs-filter-status"><option value="">All Status</option></select>
+                  </div>
+                  <div class="filter-actions"><button class="btn small" id="jobs-filter-clear">Clear filters</button></div>
+                </div>
+              </div>
             </div>
-            <div class="panel-sub" style="margin-left:0;">Sample data — job run history isn't wired up yet</div>
+            <div class="panel-sub" style="margin-left:0;">Live — last 30 days, showing Failed runs by default; use the Status filter for Success/Cancelled. Root cause is generated on demand from View details</div>
             <table>
-              <tr><th></th><th>Job name</th><th>Tag</th><th>Status</th><th>Last run</th><th>Duration</th><th>Root cause</th><th>RCA status</th><th>Action</th></tr>
+              <tr><th></th><th>Job name</th><th>Tag</th><th>Status</th><th>Last run</th><th>Duration</th><th>RCA status</th><th>Action</th></tr>
               <tbody id="jobs-failed-tbody"></tbody>
             </table>
             <div class="table-foot"><span id="jobs-failed-foot">Loading…</span></div>
           </div>
         </div>
 
-        <!-- Drawer -->
+        <!-- Job details wizard (modal) -->
+        <div class="dim-overlay hidden" id="jobDrawerBackdrop"></div>
         <div class="drawer hidden" id="jobDrawer">
           <div class="drawer-head">
             <div class="drawer-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> Job details</div>
@@ -335,7 +350,7 @@
           </div>
 
           <div class="step-head"><span class="step-num">1</span> Job Overview</div>
-          <div class="kv-grid" id="jobs-drawer-overview"></div>
+          <table class="kv-table" id="jobs-drawer-overview"></table>
 
           <div class="step-head"><span class="step-num">2</span> Root Cause <span class="confidence" id="jobs-drawer-confidence">–</span></div>
           <div class="code-box" id="jobs-drawer-rootcause"></div>
@@ -343,8 +358,11 @@
           <div class="stack-head">Stack trace / logs <span>⌄</span></div>
           <div class="stack" id="jobs-drawer-stacktrace"></div>
 
-          <div class="step-head"><span class="step-num">3</span> Recommended Actions</div>
-          <div id="jobs-drawer-actions"></div>
+          <div class="step-head"><span class="step-num">3</span> Remediation</div>
+          <table class="actions-table">
+            <tr><th>#</th><th>Remediation step</th></tr>
+            <tbody id="jobs-drawer-actions"></tbody>
+          </table>
         </div>
       </div>
     </div>

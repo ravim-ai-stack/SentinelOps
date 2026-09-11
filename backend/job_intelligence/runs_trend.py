@@ -1,20 +1,18 @@
-"""Job intelligence page — 'Job runs trend' line chart. Sample data (see stats.py)."""
+"""Job intelligence page — 'Job runs trend' line chart.
+
+Live — same job-run query as the Dashboard's Jobs Trend panel
+(system.lakeflow.job_run_timeline), one point per day for the last 14 days.
+"""
 
 from fastapi import APIRouter
 
+from job_service import build_daily_trend, fetch_job_runs
+
 router = APIRouter()
 
-_POINTS = [
-    {"label": "Sep 1", "success": 12, "failed": 3, "cancelled": 1},
-    {"label": "Sep 5", "success": 13, "failed": 2, "cancelled": 1},
-    {"label": "Sep 10", "success": 11, "failed": 3, "cancelled": 1},
-    {"label": "Sep 15", "success": 14, "failed": 2, "cancelled": 1},
-    {"label": "Sep 20", "success": 13, "failed": 4, "cancelled": 1},
-    {"label": "Sep 25", "success": 16, "failed": 3, "cancelled": 2},
-    {"label": "Sep 30", "success": 13, "failed": 3, "cancelled": 1},
-]
+WINDOW_DAYS = 14
 
 
 @router.get("/api/jobs/runs-trend")
 def runs_trend():
-    return {"points": _POINTS}
+    return {"points": build_daily_trend(fetch_job_runs(WINDOW_DAYS), WINDOW_DAYS)}

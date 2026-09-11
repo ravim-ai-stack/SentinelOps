@@ -46,7 +46,7 @@ function getJobsStats() { return fetchJson('/api/jobs/stats'); }
 function getJobRunStatus() { return fetchJson('/api/jobs/run-status'); }
 function getFailuresByCause() { return fetchJson('/api/jobs/failures-by-cause'); }
 function getJobsRunsTrend() { return fetchJson('/api/jobs/runs-trend'); }
-function getFailedJobs() { return fetchJson('/api/jobs/failed'); }
+function getJobRuns() { return fetchJson('/api/jobs/runs'); }
 function getJobDetails(jobId) {
   return fetchJson(`/api/jobs/${encodeURIComponent(jobId)}/details`);
 }

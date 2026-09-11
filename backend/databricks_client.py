@@ -43,6 +43,30 @@ def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
+def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
+    """GET a single-object Databricks REST API endpoint and return the parsed body."""
+    resp = requests.get(
+        f"{REST_BASE_URL}{path}",
+        headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+        params=params,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def rest_post(path: str, json_body: dict, timeout: int = 30) -> dict:
+    """POST to a Databricks REST API endpoint (e.g. a model serving endpoint) and return the parsed body."""
+    resp = requests.post(
+        f"{REST_BASE_URL}{path}",
+        headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+        json=json_body,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def rest_get_all(path: str, items_key: str, params: dict | None = None, max_pages: int = 10) -> list[dict]:
     """GET a paginated Databricks REST API list endpoint and return all items."""
     items: list[dict] = []

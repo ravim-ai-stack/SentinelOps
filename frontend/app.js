@@ -714,11 +714,18 @@ startLiveRefresh('access', loadAccessGovernance);
 
 // ---------------------------------------------------------------------
 // Job intelligence — one fetch per panel (stats, run status, failures by
-// cause, runs trend, failed jobs, job details drawer). Sample data
-// throughout (see backend/job_intelligence/*.py) — no job-run data
-// source is queried anywhere in this backend yet.
+// cause, runs trend, job runs table, job details drawer). Live data from
+// system.lakeflow.job_run_timeline + the Jobs REST API (see
+// backend/job_intelligence/*.py) — the job details drawer generates a
+// real AI root cause analysis on demand via a model serving endpoint.
+//
+// The jobs table fetches every run in the window (not just failures),
+// but the Status filter defaults to "Failed" so the table only shows
+// failures out of the box — picking Success/Cancelled from that filter
+// widens the view.
 // ---------------------------------------------------------------------
-let jobsFailedData = [];
+const JOBS_DEFAULT_STATUS_FILTER = 'Failed';
+let jobsRunsData = [];
 
 function setJobsError(message) {
   const el = document.getElementById('jobs-error');
@@ -729,6 +736,13 @@ function setJobsError(message) {
 function tagClass(tag) {
   const map = { Finance: 'finance', Healthcare: 'healthcare', Retail: 'retail', Marketing: 'marketing', 'Supply Chain': 'supply' };
   return map[tag] || 'finance';
+}
+
+function statusBadgeClass(status) {
+  const s = (status || '').toLowerCase();
+  if (s.startsWith('success')) return 'success';
+  if (s.startsWith('cancel')) return 'cancelled';
+  return 'failed';
 }
 
 function renderFailuresByCause(causes) {
@@ -747,25 +761,52 @@ function renderFailuresByCause(causes) {
   `).join('');
 }
 
+function populateJobFilterOptions(jobs) {
+  const tagSel = document.getElementById('jobs-filter-tag');
+  const statusSel = document.getElementById('jobs-filter-status');
+  const firstRun = !tagSel.dataset.populated;
+
+  const fillSelect = (sel, values, allLabel, defaultValue) => {
+    const wanted = sel.dataset.populated ? sel.value : (defaultValue ?? '');
+    sel.innerHTML = `<option value="">${allLabel}</option>` +
+      values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+    sel.value = values.includes(wanted) || wanted === '' ? wanted : '';
+    sel.dataset.populated = 'true';
+  };
+  fillSelect(tagSel, [...new Set(jobs.map(j => j.tag))].sort(), 'All tags');
+  fillSelect(statusSel, [...new Set(jobs.map(j => j.status))].sort(), 'All status', JOBS_DEFAULT_STATUS_FILTER);
+  if (firstRun) updateJobsFilterButtonState();
+}
+
+function updateJobsFilterButtonState() {
+  const tag = document.getElementById('jobs-filter-tag').value;
+  const status = document.getElementById('jobs-filter-status').value;
+  const active = !!tag || status !== JOBS_DEFAULT_STATUS_FILTER;
+  document.getElementById('jobs-filter-btn').classList.toggle('solid', active);
+}
+
 function renderFailedJobsTable(jobs, term) {
   const tbody = document.getElementById('jobs-failed-tbody');
   const needle = (term || '').trim().toLowerCase();
-  const filtered = !needle ? jobs : jobs.filter(j =>
-    j.job_name.toLowerCase().includes(needle) || j.tag.toLowerCase().includes(needle)
+  const tagFilter = document.getElementById('jobs-filter-tag').value;
+  const statusFilter = document.getElementById('jobs-filter-status').value;
+  const filtered = jobs.filter(j =>
+    (!needle || j.job_name.toLowerCase().includes(needle) || j.tag.toLowerCase().includes(needle)) &&
+    (!tagFilter || j.tag === tagFilter) &&
+    (!statusFilter || j.status === statusFilter)
   );
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);">No jobs match your search.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">No jobs match your filters.</td></tr>';
   } else {
     tbody.innerHTML = filtered.map(j => `
       <tr>
         <td><input type="checkbox"></td>
         <td class="link-cell" data-job="${escapeHtml(j.job_id)}">${highlight(j.job_name, needle)}</td>
         <td><span class="badge ${tagClass(j.tag)}">${escapeHtml(j.tag)}</span></td>
-        <td><span class="badge failed">${escapeHtml(j.status)}</span></td>
+        <td><span class="badge ${statusBadgeClass(j.status)}">${escapeHtml(j.status)}</span></td>
         <td>${escapeHtml(j.last_run)}</td>
         <td>${escapeHtml(j.duration)}</td>
-        <td>${escapeHtml(j.root_cause)}</td>
-        <td><span class="badge completed">${escapeHtml(j.rca_status)}</span></td>
+        <td>${j.rca_status === '—' ? '—' : `<span class="badge ${j.rca_status === 'Completed' ? 'completed' : 'medium'}">${escapeHtml(j.rca_status)}</span>`}</td>
         <td><a href="#" class="view-link" data-job="${escapeHtml(j.job_id)}">View details</a> ⋮</td>
       </tr>
     `).join('');
@@ -774,30 +815,38 @@ function renderFailedJobsTable(jobs, term) {
       el.addEventListener('click', e => { e.preventDefault(); openJobDrawer(el.dataset.job); });
     });
   }
-  document.getElementById('jobs-failed-foot').textContent = `Showing ${filtered.length} of ${jobs.length} failed jobs`;
+  document.getElementById('jobs-failed-foot').textContent = `Showing ${filtered.length} of ${jobs.length} runs`;
 }
 
 function renderJobDrawer(details) {
   const o = details.overview;
   document.getElementById('jobs-drawer-overview').innerHTML = `
-    <div><span>Job name</span><b>${escapeHtml(o.job_name)}</b></div>
-    <div><span>Status</span><b><span class="badge failed">${escapeHtml(o.status)}</span></b></div>
-    <div><span>Tag / Project</span><b><span class="badge ${tagClass(o.tag)}">${escapeHtml(o.tag)}</span></b></div>
-    <div><span>Failed at</span><b>${escapeHtml(o.failed_at)}</b></div>
-    <div><span>Run ID</span><b>${escapeHtml(o.run_id)}</b></div>
-    <div><span>Duration</span><b>${escapeHtml(o.duration)}</b></div>
+    <tr><td>Job name</td><td><b>${escapeHtml(o.job_name)}</b></td></tr>
+    <tr><td>Status</td><td><span class="badge ${statusBadgeClass(o.status)}">${escapeHtml(o.status)}</span></td></tr>
+    <tr><td>Tag / Project</td><td><span class="badge ${tagClass(o.tag)}">${escapeHtml(o.tag)}</span></td></tr>
+    <tr><td>Failed at</td><td><b>${escapeHtml(o.failed_at)}</b></td></tr>
+    <tr><td>Run ID</td><td><b>${escapeHtml(o.run_id)}</b></td></tr>
+    <tr><td>Duration</td><td><b>${escapeHtml(o.duration)}</b></td></tr>
   `;
   document.getElementById('jobs-drawer-confidence').textContent = `${details.root_cause.confidence}% confidence`;
   document.getElementById('jobs-drawer-rootcause').textContent = details.root_cause.summary;
   document.getElementById('jobs-drawer-stacktrace').innerHTML = details.stack_trace.map(escapeHtml).join('<br>');
   document.getElementById('jobs-drawer-actions').innerHTML = details.recommended_actions.map((a, i) => `
-    <div class="rec"><div class="bulb">${i + 1}</div><div><b>${escapeHtml(a.title)}</b><p>${escapeHtml(a.description)}</p></div></div>
+    <tr>
+      <td>${i + 1}</td>
+      <td><b>${escapeHtml(a.title)}</b>${a.description ? `<span>${escapeHtml(a.description)}</span>` : ''}</td>
+    </tr>
   `).join('');
 }
 
+function closeJobDrawer() {
+  document.getElementById('jobDrawer').classList.add('hidden');
+  document.getElementById('jobDrawerBackdrop').classList.add('hidden');
+}
+
 async function openJobDrawer(jobId) {
-  const drawer = document.getElementById('jobDrawer');
-  drawer.classList.remove('hidden');
+  document.getElementById('jobDrawerBackdrop').classList.remove('hidden');
+  document.getElementById('jobDrawer').classList.remove('hidden');
   try {
     renderJobDrawer(await getJobDetails(jobId));
   } catch (err) {
@@ -805,15 +854,20 @@ async function openJobDrawer(jobId) {
   }
 }
 
-document.getElementById('closeDrawer').addEventListener('click', () => document.getElementById('jobDrawer').classList.add('hidden'));
+document.getElementById('closeDrawer').addEventListener('click', closeJobDrawer);
+document.getElementById('jobDrawerBackdrop').addEventListener('click', closeJobDrawer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('jobDrawer').classList.contains('hidden')) closeJobDrawer();
+});
 
 async function loadJobIntelligence() {
   setJobsError(null);
   try {
-    const [stats, runStatus, causes, trend, failed] = await Promise.all([
-      getJobsStats(), getJobRunStatus(), getFailuresByCause(), getJobsRunsTrend(), getFailedJobs(),
+    const [stats, runStatus, causes, trend, runs] = await Promise.all([
+      getJobsStats(), getJobRunStatus(), getFailuresByCause(), getJobsRunsTrend(), getJobRuns(),
     ]);
-    jobsFailedData = failed.jobs;
+    jobsRunsData = runs.jobs;
+    populateJobFilterOptions(jobsRunsData);
 
     document.getElementById('jobs-stat-total').textContent = stats.total_runs;
     document.getElementById('jobs-stat-success').textContent = stats.successful_runs;
@@ -829,7 +883,7 @@ async function loadJobIntelligence() {
     );
     renderFailuresByCause(causes.causes);
     renderTrendChart(document.getElementById('jobs-trend-svg'), trend.points, null);
-    renderFailedJobsTable(jobsFailedData, document.getElementById('jobs-search').value);
+    renderFailedJobsTable(jobsRunsData, document.getElementById('jobs-search').value);
 
     markLiveUpdated('jobs');
   } catch (err) {
@@ -841,10 +895,40 @@ async function loadJobIntelligence() {
   }
 }
 
+const jobsFilterBtn = document.getElementById('jobs-filter-btn');
+const jobsFilterPanel = document.getElementById('jobs-filter-panel');
+
+jobsFilterBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  jobsFilterPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  if (!jobsFilterPanel.classList.contains('hidden') && !jobsFilterPanel.contains(e.target) && !jobsFilterBtn.contains(e.target)) {
+    jobsFilterPanel.classList.add('hidden');
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') jobsFilterPanel.classList.add('hidden');
+});
+
+['jobs-filter-tag', 'jobs-filter-status'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    updateJobsFilterButtonState();
+    renderFailedJobsTable(jobsRunsData, document.getElementById('jobs-search').value);
+  });
+});
+document.getElementById('jobs-filter-clear').addEventListener('click', () => {
+  document.getElementById('jobs-filter-tag').value = '';
+  document.getElementById('jobs-filter-status').value = JOBS_DEFAULT_STATUS_FILTER;
+  updateJobsFilterButtonState();
+  renderFailedJobsTable(jobsRunsData, document.getElementById('jobs-search').value);
+  jobsFilterPanel.classList.add('hidden');
+});
+
 let jobsSearchTimer;
 document.getElementById('jobs-search').addEventListener('input', e => {
   clearTimeout(jobsSearchTimer);
-  jobsSearchTimer = setTimeout(() => renderFailedJobsTable(jobsFailedData, e.target.value), 200);
+  jobsSearchTimer = setTimeout(() => renderFailedJobsTable(jobsRunsData, e.target.value), 200);
 });
 
 if (!document.getElementById('page-jobs').classList.contains('hidden')) {
