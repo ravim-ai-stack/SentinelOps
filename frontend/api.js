@@ -23,9 +23,14 @@ function getTopCatalogs() { return fetchJson('/api/dashboard/top-catalogs'); }
 
 // ---- Catalog explorer ----
 function getCatalogStats() { return fetchJson('/api/catalog/stats'); }
-function getCatalogTree(search) {
-  return fetchJson('/api/catalog/tree' + (search ? `?search=${encodeURIComponent(search)}` : ''));
+function getCatalogTree(search, tag) {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (tag) params.set('tag', tag);
+  const qs = params.toString();
+  return fetchJson('/api/catalog/tree' + (qs ? `?${qs}` : ''));
 }
+function getCatalogTags() { return fetchJson('/api/catalog/tags'); }
 function getCatalogAccess(catalog) {
   return fetchJson(`/api/catalog/${encodeURIComponent(catalog)}/access`);
 }
@@ -39,6 +44,9 @@ function getAccessGroups() { return fetchJson('/api/access/groups'); }
 function getAccessGrants() { return fetchJson('/api/access/grants'); }
 function getEffectiveAccess(user) {
   return fetchJson(`/api/access/effective/${encodeURIComponent(user)}`);
+}
+function getUserCatalogAccess(user) {
+  return fetchJson(`/api/access/catalog-access/${encodeURIComponent(user)}`);
 }
 
 // ---- Job intelligence ----

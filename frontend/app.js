@@ -247,6 +247,11 @@ if (!document.getElementById('page-dashboard').classList.contains('hidden')) {
 }
 startLiveRefresh('dashboard', loadDashboard);
 
+function renderTreeTags(tags) {
+  const text = (tags && tags.length) ? tags.join(', ') : '–';
+  return `<span class="tree-tags" title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+}
+
 function renderObjectsTable(objects, term) {
   if (!objects.length) return '<div style="color:var(--muted);font-size:12.5px;padding:8px 0;">No objects in this schema.</div>';
   const rows = objects.map(o => `
@@ -255,12 +260,13 @@ function renderObjectsTable(objects, term) {
       <td><span class="kind-badge ${escapeHtml(o.kind)}">${escapeHtml(o.kind)}</span></td>
       <td>${escapeHtml(o.type)}</td>
       <td>${escapeHtml(o.owner)}</td>
+      <td>${(o.tags && o.tags.length) ? escapeHtml(o.tags.join(', ')) : '–'}</td>
       <td>${formatDate(o.last_altered)}</td>
     </tr>
   `).join('');
   return `
     <table>
-      <tr><th>Name</th><th>Kind</th><th>Type</th><th>Owner</th><th>Last updated</th></tr>
+      <tr><th>Name</th><th>Kind</th><th>Type</th><th>Owner</th><th>Tags</th><th>Last updated</th></tr>
       ${rows}
     </table>
   `;
@@ -323,6 +329,7 @@ function renderCatalogTree(catalogs, term) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg>
           <span class="tree-schema-name">${highlight(s.schema, term)}</span>
           <span class="tree-meta">${s.objects.length} object${s.objects.length === 1 ? '' : 's'}</span>
+          ${renderTreeTags(s.tags)}
         </div>
         <div class="tree-objects">${renderObjectsTable(s.objects, term)}</div>
       </div>
@@ -333,10 +340,13 @@ function renderCatalogTree(catalogs, term) {
     return `
       <div class="tree-catalog${catOpen ? ' open' : ''}" data-cat="${ci}">
         <div class="tree-catalog-head">
-          <svg class="tree-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg>
+          <span class="tree-row-icons">
+            <svg class="tree-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg>
+          </span>
           <span class="tree-catalog-name">${highlight(cat.catalog, term)}</span>
           <span class="tree-meta">${schemaCount} schema${schemaCount === 1 ? '' : 's'} · ${objectCount} object${objectCount === 1 ? '' : 's'}</span>
+          ${renderTreeTags(cat.tags)}
           <span class="tree-owner">${escapeHtml(cat.owner || '')}</span>
           <button class="cat-access-btn${accessOpen ? ' open' : ''}" data-catalog="${escapeHtml(cat.catalog)}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -403,10 +413,32 @@ function setCatalogError(message) {
   else el.classList.add('hidden');
 }
 
+function getCatTagFilter() {
+  return document.getElementById('cat-filter-tag').value;
+}
+
+function updateCatFilterButtonState() {
+  document.getElementById('cat-filter-btn').classList.toggle('solid', !!getCatTagFilter());
+}
+
+async function populateCatTagOptions() {
+  const sel = document.getElementById('cat-filter-tag');
+  try {
+    const { tags } = await getCatalogTags();
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All tags</option>' +
+      tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    sel.value = tags.includes(current) ? current : '';
+  } catch (err) {
+    // Filter dropdown is a nice-to-have; leave it at "All tags" if this fails.
+  }
+}
+
 async function loadCatalogExplorer(search) {
   setCatalogError(null);
+  const tag = getCatTagFilter();
   try {
-    const [stats, treeData] = await Promise.all([getCatalogStats(), getCatalogTree(search)]);
+    const [stats, treeData] = await Promise.all([getCatalogStats(), getCatalogTree(search, tag), populateCatTagOptions()]);
     document.getElementById('cat-stat-catalogs').textContent = stats.catalogs;
     document.getElementById('cat-stat-schemas').textContent = stats.schemas;
     document.getElementById('cat-stat-tables').textContent = stats.tables;
@@ -433,6 +465,31 @@ document.getElementById('cat-search').addEventListener('input', e => {
 document.getElementById('cat-refresh').addEventListener('click', e => {
   e.preventDefault();
   loadCatalogExplorer(document.getElementById('cat-search').value.trim());
+});
+
+const catFilterBtn = document.getElementById('cat-filter-btn');
+const catFilterPanel = document.getElementById('cat-filter-panel');
+catFilterBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  catFilterPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  if (!catFilterPanel.classList.contains('hidden') && !catFilterPanel.contains(e.target) && !catFilterBtn.contains(e.target)) {
+    catFilterPanel.classList.add('hidden');
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') catFilterPanel.classList.add('hidden');
+});
+document.getElementById('cat-filter-tag').addEventListener('change', () => {
+  updateCatFilterButtonState();
+  loadCatalogExplorer(document.getElementById('cat-search').value.trim());
+});
+document.getElementById('cat-filter-clear').addEventListener('click', () => {
+  document.getElementById('cat-filter-tag').value = '';
+  updateCatFilterButtonState();
+  loadCatalogExplorer(document.getElementById('cat-search').value.trim());
+  catFilterPanel.classList.add('hidden');
 });
 
 if (!document.getElementById('page-catalog').classList.contains('hidden')) {
@@ -650,6 +707,56 @@ function renderEffectiveOptions() {
 
 document.getElementById('access-effective-user').addEventListener('change', e => loadEffectiveAccess(e.target.value));
 
+function renderAccessColumns(columns) {
+  if (!columns || !columns.length) return '–';
+  const text = columns.map(c => `${c.column} (${c.tag})`).join(', ');
+  return `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+}
+
+// ---- Users tab — user access by catalog/table/column ----
+async function loadUserCatalogAccess(userEmail) {
+  const tbody = document.getElementById('access-user-catalog-tbody');
+  const foot = document.getElementById('access-user-catalog-foot');
+  if (!userEmail) { tbody.innerHTML = ''; foot.textContent = ''; return; }
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Loading…</td></tr>';
+  try {
+    const data = await getUserCatalogAccess(userEmail);
+    const rows = data.access;
+    foot.textContent = `${rows.length} accessible object${rows.length === 1 ? '' : 's'} for ${userEmail}`;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">No catalog/table access found for this user.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${escapeHtml(r.catalog)}</td>
+        <td>${escapeHtml(r.schema || '–')}</td>
+        <td>${escapeHtml(r.table || '–')}</td>
+        <td><span class="kind-badge ${escapeHtml(r.kind)}">${escapeHtml(r.kind)}</span></td>
+        <td>${escapeHtml(r.privilege)}</td>
+        <td>${escapeHtml(r.via)}</td>
+        <td>${renderAccessColumns(r.columns)}</td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--red);">Could not load access: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderUserCatalogAccessOptions() {
+  const select = document.getElementById('access-user-catalog-select');
+  const current = select.value;
+  select.innerHTML = accessUsersData
+    .slice()
+    .sort((a, b) => a.user.localeCompare(b.user))
+    .map(u => `<option value="${escapeHtml(u.user)}">${escapeHtml(u.user)}</option>`)
+    .join('');
+  if (current && accessUsersData.some(u => u.user === current)) select.value = current;
+  loadUserCatalogAccess(select.value);
+}
+
+document.getElementById('access-user-catalog-select').addEventListener('change', e => loadUserCatalogAccess(e.target.value));
+
 // ---- Tab switching ----
 document.querySelectorAll('#page-access .tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -681,6 +788,7 @@ async function loadAccessGovernance() {
     renderGroups(accessGroupsData, document.getElementById('access-groups-search').value);
     applyGrantsSearch(document.getElementById('access-grants-search').value);
     renderEffectiveOptions();
+    renderUserCatalogAccessOptions();
     markLiveUpdated('access');
   } catch (err) {
     setAccessError(
@@ -694,6 +802,7 @@ async function loadAccessGovernance() {
     document.getElementById('access-groups-tbody').innerHTML = '';
     document.getElementById('access-grants-tbody').innerHTML = '';
     document.getElementById('access-effective-tbody').innerHTML = '';
+    document.getElementById('access-user-catalog-tbody').innerHTML = '';
   }
 }
 
@@ -1050,7 +1159,7 @@ function renderSensitiveTables(tables, term) {
   const tbody = document.getElementById('sec-tables-tbody');
   document.getElementById('sec-tables-count').textContent = tables.length;
   if (!tables.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">No tables match your search.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">No tables match your search.</td></tr>';
   } else {
     tbody.innerHTML = tables.map((t, i) => {
       const isOpen = secExpandedTables.has(t.table);
@@ -1059,6 +1168,7 @@ function renderSensitiveTables(tables, term) {
         <td class="link-cell">${highlight(t.table, term)}</td>
         <td>${escapeHtml(t.pii_columns.join(', '))}</td>
         <td>${escapeHtml(t.data_types.join(', '))}</td>
+        <td>${(t.tags && t.tags.length) ? escapeHtml(t.tags.join(', ')) : '–'}</td>
         <td>
           <button class="access-expand-btn${isOpen ? ' open' : ''}" data-idx="${i}" data-table="${escapeHtml(t.table)}">
             <svg class="tree-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>
@@ -1068,7 +1178,7 @@ function renderSensitiveTables(tables, term) {
         <td>${securityRiskBadge(t.risk)}</td>
         <td>${formatDate(t.last_altered)}</td>
       </tr>
-      <tr class="sens-detail-row${isOpen ? '' : ' hidden'}" data-detail-idx="${i}"><td colspan="6">${renderAccessDetail(t.access_detail, t.table)}</td></tr>
+      <tr class="sens-detail-row${isOpen ? '' : ' hidden'}" data-detail-idx="${i}"><td colspan="7">${renderAccessDetail(t.access_detail, t.table)}</td></tr>
     `;
     }).join('');
 
@@ -1094,15 +1204,30 @@ function renderSensitiveTables(tables, term) {
   document.getElementById('sec-tables-foot').textContent = `Showing ${tables.length} of ${sensitiveTablesData.length} tables`;
 }
 
+function populateSecTagOptions(tables) {
+  const sel = document.getElementById('sec-filter-tag');
+  const tags = [...new Set(tables.flatMap(t => t.tags || []))].sort();
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All tags</option>' +
+    tags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  sel.value = tags.includes(current) ? current : '';
+}
+
+function updateSecFilterButtonState() {
+  document.getElementById('sec-filter-btn').classList.toggle('solid', !!document.getElementById('sec-filter-tag').value);
+}
+
 function applySecuritySearch(term) {
   const needle = (term || '').trim().toLowerCase();
-  const tables = !needle
-    ? sensitiveTablesData
-    : sensitiveTablesData.filter(t =>
-        t.table.toLowerCase().includes(needle) ||
-        t.pii_columns.some(c => c.toLowerCase().includes(needle)) ||
-        t.data_types.some(d => d.toLowerCase().includes(needle))
-      );
+  const tagFilter = document.getElementById('sec-filter-tag').value;
+  const tables = sensitiveTablesData.filter(t =>
+    (!needle ||
+      t.table.toLowerCase().includes(needle) ||
+      t.pii_columns.some(c => c.toLowerCase().includes(needle)) ||
+      t.data_types.some(d => d.toLowerCase().includes(needle))
+    ) &&
+    (!tagFilter || (t.tags || []).includes(tagFilter))
+  );
   renderSensitiveTables(tables, needle);
 }
 
@@ -1132,6 +1257,7 @@ async function loadDataSecurity() {
       getTopPiiTables(), getSensitiveTables(), getRecentClassifications(),
     ]);
     sensitiveTablesData = sensitiveTables.sensitive_tables;
+    populateSecTagOptions(sensitiveTablesData);
 
     document.getElementById('sec-stat-tables').textContent = stats.tables_with_pii;
     document.getElementById('sec-stat-highrisk').textContent = stats.high_risk_tables;
@@ -1162,6 +1288,31 @@ document.getElementById('sec-search').addEventListener('input', e => {
 document.getElementById('sec-refresh').addEventListener('click', e => {
   e.preventDefault();
   loadDataSecurity();
+});
+
+const secFilterBtn = document.getElementById('sec-filter-btn');
+const secFilterPanel = document.getElementById('sec-filter-panel');
+secFilterBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  secFilterPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  if (!secFilterPanel.classList.contains('hidden') && !secFilterPanel.contains(e.target) && !secFilterBtn.contains(e.target)) {
+    secFilterPanel.classList.add('hidden');
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') secFilterPanel.classList.add('hidden');
+});
+document.getElementById('sec-filter-tag').addEventListener('change', () => {
+  updateSecFilterButtonState();
+  applySecuritySearch(document.getElementById('sec-search').value);
+});
+document.getElementById('sec-filter-clear').addEventListener('click', () => {
+  document.getElementById('sec-filter-tag').value = '';
+  updateSecFilterButtonState();
+  applySecuritySearch(document.getElementById('sec-search').value);
+  secFilterPanel.classList.add('hidden');
 });
 
 if (!document.getElementById('page-security').classList.contains('hidden')) {

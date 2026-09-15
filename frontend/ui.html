@@ -162,9 +162,28 @@
       </div>
       <div class="card">
         <div class="panel-head"><div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg> Catalogs</div>
-          <div class="tbl-tools"><input class="search" id="cat-search" placeholder="Search catalogs, schemas, tables..."><button class="btn solid" id="cat-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button></div>
+          <div class="tbl-tools" style="position:relative;">
+            <button class="btn" id="cat-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+            <input class="search" id="cat-search" placeholder="Search catalogs, schemas, tables...">
+            <button class="btn solid" id="cat-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button>
+            <div class="filter-panel hidden" id="cat-filter-panel">
+              <div class="filter-row">
+                <label>Tag</label>
+                <select id="cat-filter-tag"><option value="">All tags</option></select>
+              </div>
+              <div class="filter-actions"><button class="btn small" id="cat-filter-clear">Clear filters</button></div>
+            </div>
+          </div>
         </div>
         <div id="cat-error" class="hidden" style="color:var(--red);font-size:13px;margin:4px 0 10px;"></div>
+        <div class="tree-head-row">
+          <span></span>
+          <span>Name</span>
+          <span>Objects</span>
+          <span>Tags</span>
+          <span>Owner</span>
+          <span></span>
+        </div>
         <div class="tree" id="cat-tree">
           <div class="tree-empty">Loading from Databricks…</div>
         </div>
@@ -218,6 +237,21 @@
               <tbody id="access-highrisk-tbody"></tbody>
             </table>
           </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg> User access by catalog, table &amp; column</div>
+            <div class="tbl-tools"><select class="search" id="access-user-catalog-select" style="min-width:240px;"></select></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Every catalog and table this user can reach (direct or via group), with any PII-tagged columns on that table</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>Catalog</th><th>Schema</th><th>Table</th><th>Kind</th><th>Privilege</th><th>Granted via</th><th>Columns</th></tr>
+              <tbody id="access-user-catalog-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-user-catalog-foot"></span></div>
         </div>
       </div>
 
@@ -405,12 +439,23 @@
       <div class="card" style="margin-bottom:16px;">
         <div class="panel-head">
           <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> Sensitive tables (<span id="sec-tables-count">0</span>)</div>
-          <div class="tbl-tools"><input class="search" id="sec-search" placeholder="Search tables, columns..."><button class="btn solid" id="sec-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button></div>
+          <div class="tbl-tools" style="position:relative;">
+            <button class="btn" id="sec-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+            <input class="search" id="sec-search" placeholder="Search tables, columns...">
+            <button class="btn solid" id="sec-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button>
+            <div class="filter-panel hidden" id="sec-filter-panel">
+              <div class="filter-row">
+                <label>Tag</label>
+                <select id="sec-filter-tag"><option value="">All tags</option></select>
+              </div>
+              <div class="filter-actions"><button class="btn small" id="sec-filter-clear">Clear filters</button></div>
+            </div>
+          </div>
         </div>
         <div class="panel-sub" style="margin-left:0;">Detected from Unity Catalog column names — heuristic, not a data scan</div>
         <div class="table-scroll">
           <table>
-            <tr><th>Table</th><th>PII columns</th><th>Categories</th><th>Access (users/groups)</th><th>Risk</th><th>Last altered</th></tr>
+            <tr><th>Table</th><th>PII columns</th><th>Categories</th><th>Tags</th><th>Access (users/groups)</th><th>Risk</th><th>Last altered</th></tr>
             <tbody id="sec-tables-tbody"></tbody>
           </table>
         </div>

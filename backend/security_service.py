@@ -14,6 +14,7 @@ import re
 from typing import Optional
 
 from cache import ttl_cache
+from catalog_service import fetch_table_tags
 from databricks_client import run_query
 from grants_service import find_table_grantees, resolve_table_access, resolve_table_access_detail
 
@@ -94,6 +95,7 @@ def build_sensitive_tables(
 ) -> list[dict]:
     """Full per-table breakdown, including who has access — used by the
     Sensitive tables panel, which is the only one that needs grants."""
+    table_tags = fetch_table_tags()
     tables = []
     for table_path, cols in group_pii_by_table(pii_columns).items():
         catalog, schema, _name = table_path.split(".", 2)
@@ -103,6 +105,7 @@ def build_sensitive_tables(
             "table": table_path,
             "pii_columns": [c["column"] for c in cols],
             "data_types": sorted({c["category"] for c in cols}),
+            "tags": table_tags.get(table_path, []),
             "risk": compute_table_risk(cols),
             "access": resolve_table_access(grantees, group_member_count),
             "access_detail": resolve_table_access_detail(grantees, group_member_count, group_members),

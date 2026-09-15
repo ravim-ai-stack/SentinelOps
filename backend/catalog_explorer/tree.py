@@ -4,11 +4,20 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from catalog_service import build_full_tree, filter_tree
+from catalog_service import build_full_tree, filter_tree, list_distinct_tags
 
 router = APIRouter()
 
 
 @router.get("/api/catalog/tree")
-def catalog_tree(search: Optional[str] = Query(None, description="Filter by catalog/schema/object name")):
-    return {"catalogs": filter_tree(build_full_tree(), search)}
+def catalog_tree(
+    search: Optional[str] = Query(None, description="Filter by catalog/schema/object name"),
+    tag: Optional[str] = Query(None, description="Filter to objects carrying this Unity Catalog tag"),
+):
+    return {"catalogs": filter_tree(build_full_tree(), search, tag)}
+
+
+@router.get("/api/catalog/tags")
+def catalog_tags():
+    """Distinct Unity Catalog tags across all tables, for the tag filter dropdown."""
+    return {"tags": list_distinct_tags(build_full_tree())}
