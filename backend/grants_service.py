@@ -6,7 +6,10 @@ sensitive.
 """
 
 import logging
+<<<<<<< HEAD
 from concurrent.futures import ThreadPoolExecutor
+=======
+>>>>>>> c0a15a48c04ca4d88d9e2778bb6e0ad3f03bae2c
 
 from cache import ttl_cache
 from databricks_client import run_query, scim_get_all
@@ -17,11 +20,18 @@ SENSITIVE_KEYWORDS = {"pii", "security", "hr", "finance", "healthcare", "confide
 BROAD_PRIVILEGES = {"ALL_PRIVILEGES", "MODIFY"}
 
 # Every panel on Access governance (and some on Data security) needs
+<<<<<<< HEAD
 # SCIM users/groups and grants independently - cache them so repeated
 # panel loads, tab switches and filter changes within a live-refresh cycle
 # (30s on the frontend) reuse one Databricks round-trip per fetcher instead
 # of re-querying the warehouse on every interaction.
 CACHE_SECONDS = 30
+=======
+# SCIM users/groups and grants independently - cache them briefly so a
+# single page load collapses to one Databricks round-trip per fetcher
+# instead of one per panel.
+CACHE_SECONDS = 8
+>>>>>>> c0a15a48c04ca4d88d9e2778bb6e0ad3f03bae2c
 
 
 @ttl_cache(CACHE_SECONDS)
@@ -71,9 +81,34 @@ def build_group_members(users: list[dict], groups: list[dict]) -> dict[str, list
     return result
 
 
+<<<<<<< HEAD
 def _fetch_volume_privileges() -> list[dict]:
     try:
         return run_query(
+=======
+@ttl_cache(CACHE_SECONDS)
+def fetch_grants() -> list[dict]:
+    """Flatten catalog/schema/table/volume privilege grants into one list of
+    {grantee, level, object, privilege}. `grantee` is a principal name — a
+    user email or a group name, straight from Unity Catalog's own grants."""
+    catalog_rows = run_query(
+        "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
+    )
+    schema_rows = run_query(
+        """
+        SELECT grantee, catalog_name, schema_name, privilege_type
+        FROM system.information_schema.schema_privileges
+        """
+    )
+    table_rows = run_query(
+        """
+        SELECT grantee, table_catalog, table_schema, table_name, privilege_type
+        FROM system.information_schema.table_privileges
+        """
+    )
+    try:
+        volume_rows = run_query(
+>>>>>>> c0a15a48c04ca4d88d9e2778bb6e0ad3f03bae2c
             """
             SELECT grantee, volume_catalog, volume_schema, volume_name, privilege_type
             FROM system.information_schema.volume_privileges
@@ -81,6 +116,7 @@ def _fetch_volume_privileges() -> list[dict]:
         )
     except Exception:
         access_logger.warning("Volume privileges not available on this workspace", exc_info=True)
+<<<<<<< HEAD
         return []
 
 
@@ -115,6 +151,9 @@ def fetch_grants() -> list[dict]:
         schema_rows = schema_f.result()
         table_rows = table_f.result()
         volume_rows = volume_f.result()
+=======
+        volume_rows = []
+>>>>>>> c0a15a48c04ca4d88d9e2778bb6e0ad3f03bae2c
 
     grants: list[dict] = []
     for r in catalog_rows:
