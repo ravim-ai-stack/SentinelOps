@@ -145,6 +145,7 @@ def job_tag_label(tags: dict) -> str:
 def format_timestamp(dt: datetime | None) -> str:
     if not dt:
         return "–"
+    dt = dt.astimezone()  # system.lakeflow.job_run_timeline gives UTC-aware datetimes; convert to local time for display
     hour12 = dt.hour % 12 or 12
     ampm = "AM" if dt.hour < 12 else "PM"
     return f"{dt.strftime('%b')} {dt.day}, {dt.year} {hour12:02d}:{dt.minute:02d} {ampm}"

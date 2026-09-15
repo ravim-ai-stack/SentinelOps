@@ -1,12 +1,13 @@
 """
 Root cause analysis for a single failed job run — fetches the run's
-per-task error output from the Jobs REST API and asks a Databricks Model
-Serving endpoint (MODEL_NAME) to explain the failure and recommend a fix.
+per-task error output from the Jobs REST API and asks a Databricks model
+endpoint (MODEL_NAME) to explain the failure and recommend a fix, via the
+SQL warehouse's ai_query() function.
 
 Ported from the standalone Sentinel_Ops polling prototype (app/rca.py +
 app/poller.py), adapted to be called on demand for one run at a time
 (from the Job Intelligence drawer's "View details") instead of on a
-background poll loop, and to this app's plain function + REST helper
+background poll loop, and to this app's plain function + REST/SQL helper
 style instead of a client class.
 """
 
@@ -16,7 +17,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-from databricks_client import rest_get, rest_post
+from databricks_client import rest_get, run_query
 
 logger = logging.getLogger("sentinelops.rca")
 
@@ -121,22 +122,23 @@ def _parse_response(content: str) -> dict:
 
 
 def generate_rca(job_name: str, job_id: int, tags: dict, run: dict, failed_tasks: list[dict]) -> dict:
-    """Calls the MODEL_NAME serving endpoint for a root cause + fix.
-    Raises if no model is configured or the call/parse fails — callers
-    fall back to the run's raw state message/error text instead."""
+    """Calls the MODEL_NAME endpoint via the SQL warehouse's ai_query()
+    function for a root cause + fix. Raises if no model is configured or
+    the call/parse fails — callers fall back to the run's raw state
+    message/error text instead."""
     if not MODEL_NAME:
         raise RuntimeError("MODEL_NAME is not configured")
 
-    body = {
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_prompt(job_name, job_id, tags, run, failed_tasks)},
-        ],
-        "max_tokens": 600,
-        "temperature": 0.2,
-    }
-    response = rest_post(f"/serving-endpoints/{MODEL_NAME}/invocations", body, timeout=60)
-    content = response["choices"][0]["message"]["content"]
+    full_prompt = f"{SYSTEM_PROMPT}\n\n{_build_prompt(job_name, job_id, tags, run, failed_tasks)}"
+    sql = f"""
+        SELECT ai_query(
+            '{MODEL_NAME}',
+            :full_prompt,
+            modelParameters => named_struct('max_tokens', 600, 'temperature', 0.2)
+        ) AS response
+    """
+    rows = run_query(sql, {"full_prompt": full_prompt})
+    content = rows[0]["response"]
     parsed = _parse_response(content)
     parsed["generated_at"] = datetime.now(timezone.utc).isoformat()
     parsed["model"] = MODEL_NAME

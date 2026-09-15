@@ -1096,9 +1096,16 @@ function closeJobDrawer() {
 async function openJobDrawer(jobId) {
   document.getElementById('jobDrawerBackdrop').classList.remove('hidden');
   document.getElementById('jobDrawer').classList.remove('hidden');
+  document.getElementById('jobDrawerLoading').classList.remove('hidden');
+  document.getElementById('jobDrawerBody').classList.add('hidden');
   try {
-    renderJobDrawer(await getJobDetails(jobId));
+    const details = await getJobDetails(jobId);
+    renderJobDrawer(details);
+    document.getElementById('jobDrawerLoading').classList.add('hidden');
+    document.getElementById('jobDrawerBody').classList.remove('hidden');
   } catch (err) {
+    document.getElementById('jobDrawerLoading').classList.add('hidden');
+    document.getElementById('jobDrawerBody').classList.remove('hidden');
     document.getElementById('jobs-drawer-rootcause').textContent = `Could not load job details: ${err.message}`;
   }
 }
