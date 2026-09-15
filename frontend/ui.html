@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SentinelOps</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <div class="sidebar">
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.4 8.7-8 10-4.6-1.3-8-5-8-10V5l8-3z" fill="#fff"/></svg>
+      <span>SentinelOps</span>
+    </div>
+    <div class="nav">
+      <div class="nav-item" data-page="dashboard">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9.5 12 3l9 6.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V9.5Z"/></svg>
+        <span>Dashboard</span>
+      </div>
+      <div class="nav-item" data-page="catalog">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg>
+        <span>Catalog explorer</span>
+      </div>
+      <div class="nav-item" data-page="access">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="18" cy="8.5" r="2.4"/><path d="M15.5 14.6c2.5.3 4.5 2.2 4.5 5.4"/></svg>
+        <span>Access governance</span>
+      </div>
+      <div class="nav-item" data-page="jobs">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.6 2.6"/></svg>
+        <span>Job intelligence</span>
+      </div>
+      <div class="nav-item" data-page="security">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 2.7v5.5c0 4.6-3 8-7 9.6-4-1.6-7-5-7-9.6V5.7L12 3Z"/><path d="M9.3 12l1.9 1.9 3.5-3.9"/></svg>
+        <span>Data security</span>
+      </div>
+    </div>
+    <div class="sidebar-foot">
+      <div class="avatar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#cfd8ea" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+      </div>
+      <span>Admin</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8592ac" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+  </div>
+
+  <!-- ===================== MAIN ===================== -->
+  <div class="main">
+
+    <!-- =============== PAGE 1: DASHBOARD =============== -->
+    <div class="page" id="page-dashboard">
+      <div class="topbar">
+        <div>
+          <h1>Dashboard</h1>
+          <p>Overview of your Databricks environment</p>
+        </div>
+        <div class="live-indicator"><span class="live-dot" id="dash-live-dot"></span>Live &middot; updated <span id="dash-live-updated">–</span></div>
+      </div>
+      <div id="dash-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
+
+      <div class="stat-row">
+        <div class="card stat">
+          <div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg></div></div>
+          <div><div class="stat-label">Catalogs</div><div class="stat-num" id="dash-stat-catalogs">–</div><div class="stat-delta neutral">Live</div></div>
+        </div>
+        <div class="card stat">
+          <div class="stat-top"><div class="icon purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.4 13.3l6.9 4M15.3 6.7L8.4 10.7"/></svg></div></div>
+          <div><div class="stat-label">Schemas</div><div class="stat-num" id="dash-stat-schemas">–</div><div class="stat-delta neutral">Live</div></div>
+        </div>
+        <div class="card stat">
+          <div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg></div></div>
+          <div><div class="stat-label">Tables</div><div class="stat-num" id="dash-stat-tables">–</div><div class="stat-delta neutral">Live</div></div>
+        </div>
+        <div class="card stat">
+          <div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></div></div>
+          <div><div class="stat-label">Users</div><div class="stat-num" id="dash-stat-users">–</div><div class="stat-delta neutral">Live</div></div>
+        </div>
+        <div class="card stat">
+          <div class="stat-top"><div class="icon pink"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="18" cy="8.5" r="2.4"/><path d="M15.5 14.6c2.5.3 4.5 2.2 4.5 5.4"/></svg></div></div>
+          <div><div class="stat-label">Groups</div><div class="stat-num" id="dash-stat-groups">–</div><div class="stat-delta neutral">Live</div></div>
+        </div>
+      </div>
+
+      <div class="panel-row cols-3">
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg> Job Health Overview</div>
+            <a class="view-link" href="#" data-goto="jobs">View details →</a>
+          </div>
+          <div class="panel-sub">Job runs in the last 30 days</div>
+          <div class="donut-wrap">
+            <div class="donut" id="dash-jobhealth-donut">
+              <div class="donut-hole"><b id="dash-jobhealth-total">–</b><span>Total Runs</span></div>
+            </div>
+            <div class="legend" id="dash-jobhealth-legend"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 2.7v5.5c0 4.6-3 8-7 9.6-4-1.6-7-5-7-9.6V5.7L12 3Z"/></svg> Access Risks</div>
+            <a class="view-link" href="#" data-goto="access">View details →</a>
+          </div>
+          <div class="panel-sub">Objects with excessive or sensitive access</div>
+          <div class="vbars" id="dash-risk-bars"></div>
+        </div>
+
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Data Security &amp; PII</div>
+            <a class="view-link" href="#" data-goto="security">View details →</a>
+          </div>
+          <div class="panel-sub">Types of sensitive data detected across tables</div>
+          <div style="background:var(--blue-soft);color:var(--blue);display:inline-block;padding:4px 10px;border-radius:8px;font-weight:700;font-size:13px;margin-bottom:14px;"><span id="dash-pii-count">–</span> <span style="font-weight:500;color:#5768b0;">PII Columns</span></div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">PII Category Breakdown</div>
+          <div class="hbars" id="dash-pii-bars"></div>
+        </div>
+      </div>
+
+      <div class="panel-row cols-2">
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg> Jobs Trend</div>
+            <a class="view-link" href="#" data-goto="jobs">View details →</a>
+          </div>
+          <div class="panel-sub">Job runs per day — last 14 days</div>
+          <svg viewBox="0 0 560 170" width="100%" height="170" style="overflow:visible;" id="dash-jobstrend-svg"></svg>
+          <div class="linechart-x" id="dash-jobstrend-x"></div>
+          <div class="chart-legend">
+            <div class="legend-row"><span class="dot" style="background:var(--green)"></span>Success</div>
+            <div class="legend-row"><span class="dot" style="background:var(--red)"></span>Failed</div>
+            <div class="legend-row"><span class="dot" style="background:#c9ced9"></span>Cancelled</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> Most Frequently Used Catalog</div>
+            <a class="view-link" href="#" data-goto="catalog">View details →</a>
+          </div>
+          <div class="panel-sub">Based on Unity Catalog access lineage in the last 30 days</div>
+          <div class="hbars" id="dash-top-catalogs"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =============== PAGE 2: CATALOG EXPLORER (placeholder-light) =============== -->
+    <div class="page hidden" id="page-catalog">
+      <div class="topbar">
+        <div><h1>Catalog explorer</h1><p>Browse catalogs, schemas and tables in your Databricks environment</p></div>
+        <div class="live-indicator"><span class="live-dot" id="cat-live-dot"></span>Live &middot; updated <span id="cat-live-updated">–</span></div>
+      </div>
+      <div class="stat-row n6">
+        <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg></div></div><div><div class="stat-label">Catalogs</div><div class="stat-num" id="cat-stat-catalogs">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.4 13.3l6.9 4M15.3 6.7L8.4 10.7"/></svg></div></div><div><div class="stat-label">Schemas</div><div class="stat-num" id="cat-stat-schemas">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg></div></div><div><div class="stat-label">Tables/Views</div><div class="stat-num" id="cat-stat-tables">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon amber">ƒ</div></div><div><div class="stat-label">Functions</div><div class="stat-num" id="cat-stat-functions">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></div></div><div><div class="stat-label">Volumes</div><div class="stat-num" id="cat-stat-volumes">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon pink"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg></div></div><div><div class="stat-label">Models</div><div class="stat-num" id="cat-stat-models">–</div><div class="stat-delta neutral">Live</div></div></div>
+      </div>
+      <div class="card">
+        <div class="panel-head"><div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg> Catalogs</div>
+          <div class="tbl-tools" style="position:relative;">
+            <button class="btn" id="cat-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+            <input class="search" id="cat-search" placeholder="Search catalogs, schemas, tables...">
+            <button class="btn solid" id="cat-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button>
+            <div class="filter-panel hidden" id="cat-filter-panel">
+              <div class="filter-row">
+                <label>Tag</label>
+                <select id="cat-filter-tag"><option value="">All tags</option></select>
+              </div>
+              <div class="filter-actions"><button class="btn small" id="cat-filter-clear">Clear filters</button></div>
+            </div>
+          </div>
+        </div>
+        <div id="cat-error" class="hidden" style="color:var(--red);font-size:13px;margin:4px 0 10px;"></div>
+        <div class="tree-head-row">
+          <span></span>
+          <span>Name</span>
+          <span>Objects</span>
+          <span>Tags</span>
+          <span>Owner</span>
+          <span></span>
+        </div>
+        <div class="tree" id="cat-tree">
+          <div class="tree-empty">Loading from Databricks…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =============== PAGE 3: ACCESS GOVERNANCE =============== -->
+    <div class="page hidden" id="page-access">
+      <div class="topbar">
+        <div><h1>Access governance</h1><p>Monitor and analyze access to your Databricks resources</p></div>
+        <div class="live-indicator"><span class="live-dot" id="access-live-dot"></span>Live &middot; updated <span id="access-live-updated">–</span></div>
+      </div>
+      <div class="tabs">
+        <div class="tab active" data-tab="users">Users</div><div class="tab" data-tab="groups">Groups</div><div class="tab" data-tab="inspect">Inspect</div>
+      </div>
+      <div id="access-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
+
+      <div class="stat-row n4">
+        <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></div></div><div><div class="stat-label">Total users</div><div class="stat-num" id="access-stat-users">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="18" cy="8.5" r="2.4"/><path d="M15.5 14.6c2.5.3 4.5 2.2 4.5 5.4"/></svg></div></div><div><div class="stat-label">Total groups</div><div class="stat-num" id="access-stat-groups">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M14 9l2 2"/></svg></div></div><div><div class="stat-label">Total grants</div><div class="stat-num" id="access-stat-grants">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3.5 21 19H3L12 3.5Z"/><path d="M12 9.5v4.2M12 17h.01"/></svg></div></div><div><div class="stat-label">High risk access</div><div class="stat-num" id="access-stat-highrisk">–</div><div class="stat-delta neutral">Live</div></div></div>
+      </div>
+
+      <!-- ---- Users tab ---- -->
+      <div class="access-subpage" id="access-tab-users">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg> Users (<span id="access-users-count">0</span>)</div>
+            <div class="tbl-tools"><input class="search" id="access-search" placeholder="Search users, groups..."><button class="btn solid" id="access-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Users and their access details, computed live from Unity Catalog grants</div>
+          <table>
+            <tr><th>User</th><th>Groups</th><th>Principal type</th><th>Objects with access</th><th>High risk access</th><th>Risk level</th></tr>
+            <tbody id="access-users-tbody"></tbody>
+          </table>
+          <div class="table-foot"><span id="access-users-foot">Loading…</span></div>
+        </div>
+
+        <div class="panel-row cols-2">
+          <div class="card">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V11M12 20V4M20 20v-7"/></svg> Most active users by access</div>
+            <div class="panel-sub" style="margin-left:0;">Users with access to the most objects</div>
+            <div class="hbars" id="access-most-active"></div>
+          </div>
+          <div class="card">
+            <div class="panel-head"><div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3.5 21 19H3L12 3.5Z"/><path d="M12 9.5v4.2M12 17h.01"/></svg> High risk users</div></div>
+            <div class="panel-sub" style="margin-left:0;">Users with high risk access (broad or sensitive access)</div>
+            <table>
+              <tr><th>User</th><th>Risk level</th><th>Reason</th><th>Objects</th></tr>
+              <tbody id="access-highrisk-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></svg> User access by catalog, table &amp; column</div>
+            <div class="tbl-tools"><select class="search" id="access-user-catalog-select" style="min-width:240px;"></select></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Every catalog and table this user can reach (direct or via group), with any PII-tagged columns on that table</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>Catalog</th><th>Schema</th><th>Table</th><th>Kind</th><th>Privilege</th><th>Granted via</th><th>Columns</th></tr>
+              <tbody id="access-user-catalog-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-user-catalog-foot"></span></div>
+        </div>
+      </div>
+
+      <!-- ---- Groups tab (also hosts Grants + Effective access) ---- -->
+      <div class="access-subpage hidden" id="access-tab-groups">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="18" cy="8.5" r="2.4"/><path d="M15.5 14.6c2.5.3 4.5 2.2 4.5 5.4"/></svg> Groups (<span id="access-groups-count">0</span>)</div>
+            <div class="tbl-tools"><input class="search" id="access-groups-search" placeholder="Search groups..."></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Groups and the access granted directly to them (members inherit these grants)</div>
+          <table>
+            <tr><th>Group</th><th>Members</th><th>Objects with access</th><th>High risk objects</th></tr>
+            <tbody id="access-groups-tbody"></tbody>
+          </table>
+          <div class="table-foot"><span id="access-groups-foot">Loading…</span></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M14 9l2 2"/></svg> Grants (<span id="access-grants-count">0</span>)</div>
+            <div class="tbl-tools" style="position:relative;">
+              <button class="btn" id="access-grants-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+              <input class="search" id="access-grants-search" placeholder="Search grantee, object, privilege...">
+              <div class="filter-panel hidden" id="access-grants-filter-panel">
+                <div class="filter-row">
+                  <label>Level</label>
+                  <select id="access-grants-filter-level"><option value="">All levels</option></select>
+                </div>
+                <div class="filter-row">
+                  <label>Object</label>
+                  <input class="search" id="access-grants-filter-object" placeholder="e.g. uc_governance.data">
+                </div>
+                <div class="filter-row">
+                  <label>Privilege</label>
+                  <select id="access-grants-filter-privilege"><option value="">All privileges</option></select>
+                </div>
+                <div class="filter-actions"><button class="btn small" id="access-grants-filter-clear">Clear filters</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Raw Unity Catalog privilege grants at catalog, schema, table and volume level</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>Grantee</th><th>Level</th><th>Object</th><th>Privilege</th></tr>
+              <tbody id="access-grants-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-grants-foot">Loading…</span><div class="pager" id="access-grants-pager"></div></div>
+        </div>
+
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.4 13.3l6.9 4M15.3 6.7L8.4 10.7"/></svg> Effective access</div>
+            <div class="tbl-tools"><select class="search" id="access-effective-user" style="min-width:240px;"></select></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Objects this user can reach, resolved through direct grants and group membership</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>Object</th><th>Level</th><th>Privilege</th><th>Granted via</th></tr>
+              <tbody id="access-effective-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-effective-foot"></span></div>
+        </div>
+      </div>
+
+      <!-- ---- Inspect tab — per-catalog, opened from Catalog explorer's "Inspect" button ---- -->
+      <div class="access-subpage hidden" id="access-tab-inspect">
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg> Inspect a catalog</div>
+            <div class="tbl-tools"><select class="search" id="access-inspect-catalog-select" style="min-width:240px;"><option value="">Select a catalog…</option></select></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Every user who can reach this catalog, what they're granted, and any PII-tagged columns they can see</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>User</th><th>Groups</th><th>Schema</th><th>Table</th><th>Kind</th><th>Privilege</th><th>Granted via</th><th>Columns</th></tr>
+              <tbody id="access-inspect-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-inspect-foot">Pick a catalog to inspect, or use "Inspect" from Catalog explorer.</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =============== PAGE 4: JOB INTELLIGENCE =============== -->
+    <div class="page hidden" id="page-jobs">
+      <div class="split">
+        <div class="left">
+          <div class="topbar">
+            <div><h1>Job intelligence</h1><p>Monitor Databricks jobs, detect failures, get AI‑powered root cause analysis and recommendations</p></div>
+            <div class="live-indicator"><span class="live-dot" id="jobs-live-dot"></span>Live &middot; updated <span id="jobs-live-updated">–</span></div>
+          </div>
+          <div id="jobs-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
+          <div class="stat-row" style="grid-template-columns:repeat(5,1fr);">
+            <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8V4Z"/></svg></div></div><div><div class="stat-label">Total job runs</div><div class="stat-num" id="jobs-stat-total">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg></div></div><div><div class="stat-label">Successful runs</div><div class="stat-num" id="jobs-stat-success">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div></div><div><div class="stat-label">Failed runs</div><div class="stat-num" id="jobs-stat-failed">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.6 2.6"/></svg></div></div><div><div class="stat-label">Running jobs</div><div class="stat-num" id="jobs-stat-running">–</div><div class="stat-delta neutral">Live</div></div></div>
+            <div class="card stat"><div class="stat-top"><div class="icon pink"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg></div></div><div><div class="stat-label">RCA generated</div><div class="stat-num" id="jobs-stat-rca">–</div><div class="stat-delta neutral">Live</div></div></div>
+          </div>
+
+          <div class="panel-row cols-3">
+            <div class="card">
+              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V11M12 20V4M20 20v-7"/></svg> Job run status</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — job runs in the last 30 days</div>
+              <div class="donut-wrap" style="margin-top:12px;">
+                <div class="donut" id="jobs-runstatus-donut" style="width:120px;height:120px;">
+                  <div class="donut-hole" style="width:78px;height:78px;"><b id="jobs-runstatus-total" style="font-size:18px;">–</b><span style="font-size:10px;">Total runs</span></div>
+                </div>
+                <div class="legend" id="jobs-runstatus-legend" style="font-size:12.5px;"></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg> Failures by root cause</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — failed runs in the last 30 days, by termination code</div>
+              <div class="hbars" id="jobs-failure-causes" style="margin-top:14px;"></div>
+            </div>
+            <div class="card">
+              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg> Job runs trend</div>
+              <div class="panel-sub" style="margin:2px 0 0 26px;">Live — job runs per day, last 14 days</div>
+              <svg viewBox="0 0 260 130" width="100%" height="130" style="margin-top:10px;" id="jobs-trend-svg"></svg>
+              <div class="chart-legend" style="margin-top:6px;">
+                <div class="legend-row"><span class="dot" style="background:var(--green)"></span>Success</div>
+                <div class="legend-row"><span class="dot" style="background:var(--red)"></span>Failed</div>
+                <div class="legend-row"><span class="dot" style="background:#c9ced9"></span>Canceled</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="panel-head">
+              <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 2.5h6v3H9z"/><path d="M9 11h6M9 15h6"/></svg> Jobs</div>
+              <div class="tbl-tools" style="position:relative;">
+                <button class="btn" id="jobs-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+                <input class="search" id="jobs-search" placeholder="Search jobs...">
+                <div class="filter-panel hidden" id="jobs-filter-panel">
+                  <div class="filter-row">
+                    <label>Tag</label>
+                    <select id="jobs-filter-tag"><option value="">All tags</option></select>
+                  </div>
+                  <div class="filter-row">
+                    <label>Status</label>
+                    <select id="jobs-filter-status"><option value="">All Status</option></select>
+                  </div>
+                  <div class="filter-actions"><button class="btn small" id="jobs-filter-clear">Clear filters</button></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel-sub" style="margin-left:0;">Live — last 30 days, showing Failed runs by default; use the Status filter for Success/Cancelled. Root cause is generated on demand from View details</div>
+            <table>
+              <tr><th></th><th>Job name</th><th>Tag</th><th>Status</th><th>Last run</th><th>Duration</th><th>RCA status</th><th>Action</th></tr>
+              <tbody id="jobs-failed-tbody"></tbody>
+            </table>
+            <div class="table-foot"><span id="jobs-failed-foot">Loading…</span></div>
+          </div>
+        </div>
+
+        <!-- Job details wizard (modal) -->
+        <div class="dim-overlay hidden" id="jobDrawerBackdrop"></div>
+        <div class="drawer hidden" id="jobDrawer">
+          <div class="drawer-head">
+            <div class="drawer-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> Job details</div>
+            <button class="close-x" id="closeDrawer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </div>
+
+          <div class="step-head"><span class="step-num">1</span> Job Overview</div>
+          <table class="kv-table" id="jobs-drawer-overview"></table>
+
+          <div class="step-head"><span class="step-num">2</span> Root Cause <span class="confidence" id="jobs-drawer-confidence">–</span></div>
+          <div class="code-box" id="jobs-drawer-rootcause"></div>
+
+          <div class="stack-head">Stack trace / logs <span>⌄</span></div>
+          <div class="stack" id="jobs-drawer-stacktrace"></div>
+
+          <div class="step-head"><span class="step-num">3</span> Remediation</div>
+          <table class="actions-table">
+            <tr><th>#</th><th>Remediation step</th></tr>
+            <tbody id="jobs-drawer-actions"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- =============== PAGE 5: DATA SECURITY =============== -->
+    <div class="page hidden" id="page-security">
+      <div class="topbar">
+        <div><h1>Data security</h1><p>Discover and manage sensitive data across your Databricks environment</p></div>
+        <div class="live-indicator"><span class="live-dot" id="sec-live-dot"></span>Live &middot; updated <span id="sec-live-updated">–</span></div>
+      </div>
+      <div id="security-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
+
+      <div class="stat-row n4">
+        <div class="card stat"><div class="stat-top"><div class="icon purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6a8 3 0 0 0 16 0A8 3 0 0 0 4 6Z"/><path d="M4 6v6a8 3 0 0 0 16 0V6"/><path d="M4 12v6a8 3 0 0 0 16 0v-6"/></svg></div></div><div><div class="stat-label">Tables with PII</div><div class="stat-num" id="sec-stat-tables">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon red"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3.5 21 19H3L12 3.5Z"/><path d="M12 9.5v4.2M12 17h.01"/></svg></div></div><div><div class="stat-label">High risk tables</div><div class="stat-num" id="sec-stat-highrisk">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg></div></div><div><div class="stat-label">PII columns</div><div class="stat-num" id="sec-stat-columns">–</div><div class="stat-delta neutral">Live</div></div></div>
+        <div class="card stat"><div class="stat-top"><div class="icon blue"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 2.7v5.5c0 4.6-3 8-7 9.6-4-1.6-7-5-7-9.6V5.7L12 3Z"/></svg></div></div><div><div class="stat-label">Classified datasets</div><div class="stat-num" id="sec-stat-classified">–</div><div class="stat-delta neutral">Live</div></div></div>
+      </div>
+
+      <div class="panel-row cols-3">
+        <div class="card">
+          <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 2.7v5.5c0 4.6-3 8-7 9.6-4-1.6-7-5-7-9.6V5.7L12 3Z"/></svg> PII distribution by risk level</div>
+          <div class="donut-wrap" style="margin-top:14px;" id="sec-risk-donut-wrap">
+            <div class="donut" id="sec-risk-donut">
+              <div class="donut-hole"><b id="sec-risk-total">0</b><span>PII Columns</span></div>
+            </div>
+            <div class="legend" id="sec-risk-legend"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> PII columns by category</div>
+          <div class="hbars" style="margin-top:14px;" id="sec-category-bars"></div>
+        </div>
+        <div class="card">
+          <div class="panel-head"><div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg> Top tables with PII</div></div>
+          <div class="hbars" style="margin-top:14px;" id="sec-top-tables"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="panel-head">
+          <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8L14 2Z"/><path d="M14 2v6h6"/></svg> Sensitive tables (<span id="sec-tables-count">0</span>)</div>
+          <div class="tbl-tools" style="position:relative;">
+            <button class="btn" id="sec-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+            <input class="search" id="sec-search" placeholder="Search tables, columns...">
+            <button class="btn solid" id="sec-refresh"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12a9 9 0 1 1 3 6.7"/><path d="M3 21v-6h6"/></svg> Refresh</button>
+            <div class="filter-panel hidden" id="sec-filter-panel">
+              <div class="filter-row">
+                <label>Tag</label>
+                <select id="sec-filter-tag"><option value="">All tags</option></select>
+              </div>
+              <div class="filter-actions"><button class="btn small" id="sec-filter-clear">Clear filters</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-sub" style="margin-left:0;">Detected from Unity Catalog column names — heuristic, not a data scan</div>
+        <div class="table-scroll">
+          <table>
+            <tr><th>Table</th><th>PII columns</th><th>Categories</th><th>Tags</th><th>Access (users/groups)</th><th>Risk</th><th>Last altered</th></tr>
+            <tbody id="sec-tables-tbody"></tbody>
+          </table>
+        </div>
+        <div class="table-foot"><span id="sec-tables-foot">Loading…</span></div>
+      </div>
+
+      <div class="card">
+        <div class="panel-head"><div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4l2.6 2.6"/></svg> Recent classifications</div></div>
+        <div class="panel-sub" style="margin-left:0;">Most recently altered tables among those with detected PII columns</div>
+        <table>
+          <tr><th>Table</th><th>Column</th><th>Classification</th><th>Confidence</th><th>Risk</th><th>Last altered</th></tr>
+          <tbody id="sec-recent-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
