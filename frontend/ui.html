@@ -197,7 +197,7 @@
         <div class="live-indicator"><span class="live-dot" id="access-live-dot"></span>Live &middot; updated <span id="access-live-updated">–</span></div>
       </div>
       <div class="tabs">
-        <div class="tab active" data-tab="users">Users</div><div class="tab" data-tab="groups">Groups</div>
+        <div class="tab active" data-tab="users">Users</div><div class="tab" data-tab="groups">Groups</div><div class="tab" data-tab="inspect">Inspect</div>
       </div>
       <div id="access-error" class="hidden" style="color:var(--red);font-size:13px;margin:0 0 12px;"></div>
 
@@ -273,7 +273,25 @@
         <div class="card" style="margin-bottom:16px;">
           <div class="panel-head">
             <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M14 9l2 2"/></svg> Grants (<span id="access-grants-count">0</span>)</div>
-            <div class="tbl-tools"><input class="search" id="access-grants-search" placeholder="Search grantee, object, privilege..."></div>
+            <div class="tbl-tools" style="position:relative;">
+              <button class="btn" id="access-grants-filter-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg> Filter</button>
+              <input class="search" id="access-grants-search" placeholder="Search grantee, object, privilege...">
+              <div class="filter-panel hidden" id="access-grants-filter-panel">
+                <div class="filter-row">
+                  <label>Level</label>
+                  <select id="access-grants-filter-level"><option value="">All levels</option></select>
+                </div>
+                <div class="filter-row">
+                  <label>Object</label>
+                  <input class="search" id="access-grants-filter-object" placeholder="e.g. uc_governance.data">
+                </div>
+                <div class="filter-row">
+                  <label>Privilege</label>
+                  <select id="access-grants-filter-privilege"><option value="">All privileges</option></select>
+                </div>
+                <div class="filter-actions"><button class="btn small" id="access-grants-filter-clear">Clear filters</button></div>
+              </div>
+            </div>
           </div>
           <div class="panel-sub" style="margin-left:0;">Raw Unity Catalog privilege grants at catalog, schema, table and volume level</div>
           <div class="table-scroll">
@@ -298,6 +316,24 @@
             </table>
           </div>
           <div class="table-foot"><span id="access-effective-foot"></span></div>
+        </div>
+      </div>
+
+      <!-- ---- Inspect tab — per-catalog, opened from Catalog explorer's "Inspect" button ---- -->
+      <div class="access-subpage hidden" id="access-tab-inspect">
+        <div class="card">
+          <div class="panel-head">
+            <div class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg> Inspect a catalog</div>
+            <div class="tbl-tools"><select class="search" id="access-inspect-catalog-select" style="min-width:240px;"><option value="">Select a catalog…</option></select></div>
+          </div>
+          <div class="panel-sub" style="margin-left:0;">Every user who can reach this catalog, what they're granted, and any PII-tagged columns they can see</div>
+          <div class="table-scroll">
+            <table>
+              <tr><th>User</th><th>Groups</th><th>Schema</th><th>Table</th><th>Kind</th><th>Privilege</th><th>Granted via</th><th>Columns</th></tr>
+              <tbody id="access-inspect-tbody"></tbody>
+            </table>
+          </div>
+          <div class="table-foot"><span id="access-inspect-foot">Pick a catalog to inspect, or use "Inspect" from Catalog explorer.</span></div>
         </div>
       </div>
     </div>

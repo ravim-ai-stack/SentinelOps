@@ -48,6 +48,9 @@ function getEffectiveAccess(user) {
 function getUserCatalogAccess(user) {
   return fetchJson(`/api/access/catalog-access/${encodeURIComponent(user)}`);
 }
+function getCatalogInspect(catalog) {
+  return fetchJson(`/api/access/catalog-inspect/${encodeURIComponent(catalog)}`);
+}
 
 // ---- Job intelligence ----
 function getJobsStats() { return fetchJson('/api/jobs/stats'); }

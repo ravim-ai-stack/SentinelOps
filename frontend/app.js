@@ -348,10 +348,16 @@ function renderCatalogTree(catalogs, term) {
           <span class="tree-meta">${schemaCount} schema${schemaCount === 1 ? '' : 's'} · ${objectCount} object${objectCount === 1 ? '' : 's'}</span>
           ${renderTreeTags(cat.tags)}
           <span class="tree-owner">${escapeHtml(cat.owner || '')}</span>
-          <button class="cat-access-btn${accessOpen ? ' open' : ''}" data-catalog="${escapeHtml(cat.catalog)}">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-            View access
-          </button>
+          <span class="tree-row-actions">
+            <button class="cat-access-btn${accessOpen ? ' open' : ''}" data-catalog="${escapeHtml(cat.catalog)}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              View access
+            </button>
+            <button class="cat-inspect-btn" data-catalog="${escapeHtml(cat.catalog)}">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+              Inspect
+            </button>
+          </span>
         </div>
         <div class="cat-access-panel${accessOpen ? '' : ' hidden'}" data-catalog-panel="${escapeHtml(cat.catalog)}">${accessOpen ? renderCatalogAccessPanel(cat.catalog) : ''}</div>
         <div class="tree-schemas">${schemasHtml}</div>
@@ -389,6 +395,12 @@ function renderCatalogTree(catalogs, term) {
         if (!catAccessCache[catalog] && !catAccessLoading.has(catalog)) loadCatalogAccess(catalog);
       }
       renderCatalogTree(lastCatalogs, lastCatalogTerm);
+    });
+  });
+  container.querySelectorAll('.cat-inspect-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      inspectCatalog(btn.dataset.catalog);
     });
   });
   container.querySelectorAll('.cat-access-panel .access-detail-group-head').forEach(head => {
@@ -649,13 +661,43 @@ function renderGrantsPage() {
   renderGrantsPager(totalPages);
 }
 
+function populateGrantsFilterOptions() {
+  const levelSel = document.getElementById('access-grants-filter-level');
+  const privSel = document.getElementById('access-grants-filter-privilege');
+  const currentLevel = levelSel.value;
+  const currentPriv = privSel.value;
+  const levels = [...new Set(accessGrantsData.map(g => g.level))].sort();
+  const privileges = [...new Set(accessGrantsData.map(g => g.privilege))].sort();
+  levelSel.innerHTML = '<option value="">All levels</option>' +
+    levels.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  privSel.innerHTML = '<option value="">All privileges</option>' +
+    privileges.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+  levelSel.value = levels.includes(currentLevel) ? currentLevel : '';
+  privSel.value = privileges.includes(currentPriv) ? currentPriv : '';
+}
+
+function updateGrantsFilterButtonState() {
+  const active = document.getElementById('access-grants-filter-level').value ||
+    document.getElementById('access-grants-filter-object').value.trim() ||
+    document.getElementById('access-grants-filter-privilege').value;
+  document.getElementById('access-grants-filter-btn').classList.toggle('solid', !!active);
+}
+
 function applyGrantsSearch(term) {
   const needle = (term || '').trim().toLowerCase();
-  grantsFiltered = !needle ? accessGrantsData : accessGrantsData.filter(g =>
-    g.grantee.toLowerCase().includes(needle) ||
-    g.object.toLowerCase().includes(needle) ||
-    g.privilege.toLowerCase().includes(needle) ||
-    g.level.toLowerCase().includes(needle)
+  const levelFilter = document.getElementById('access-grants-filter-level').value;
+  const objectFilter = document.getElementById('access-grants-filter-object').value.trim().toLowerCase();
+  const privilegeFilter = document.getElementById('access-grants-filter-privilege').value;
+  grantsFiltered = accessGrantsData.filter(g =>
+    (!needle ||
+      g.grantee.toLowerCase().includes(needle) ||
+      g.object.toLowerCase().includes(needle) ||
+      g.privilege.toLowerCase().includes(needle) ||
+      g.level.toLowerCase().includes(needle)
+    ) &&
+    (!levelFilter || g.level === levelFilter) &&
+    (!objectFilter || g.object.toLowerCase().includes(objectFilter)) &&
+    (!privilegeFilter || g.privilege === privilegeFilter)
   );
   grantsPage = 1;
   renderGrantsPage();
@@ -665,6 +707,45 @@ let grantsSearchTimer;
 document.getElementById('access-grants-search').addEventListener('input', e => {
   clearTimeout(grantsSearchTimer);
   grantsSearchTimer = setTimeout(() => applyGrantsSearch(e.target.value), 200);
+});
+
+const grantsFilterBtn = document.getElementById('access-grants-filter-btn');
+const grantsFilterPanel = document.getElementById('access-grants-filter-panel');
+grantsFilterBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  grantsFilterPanel.classList.toggle('hidden');
+});
+document.addEventListener('click', e => {
+  if (!grantsFilterPanel.classList.contains('hidden') && !grantsFilterPanel.contains(e.target) && !grantsFilterBtn.contains(e.target)) {
+    grantsFilterPanel.classList.add('hidden');
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') grantsFilterPanel.classList.add('hidden');
+});
+document.getElementById('access-grants-filter-level').addEventListener('change', () => {
+  updateGrantsFilterButtonState();
+  applyGrantsSearch(document.getElementById('access-grants-search').value);
+});
+document.getElementById('access-grants-filter-privilege').addEventListener('change', () => {
+  updateGrantsFilterButtonState();
+  applyGrantsSearch(document.getElementById('access-grants-search').value);
+});
+let grantsObjectFilterTimer;
+document.getElementById('access-grants-filter-object').addEventListener('input', () => {
+  clearTimeout(grantsObjectFilterTimer);
+  grantsObjectFilterTimer = setTimeout(() => {
+    updateGrantsFilterButtonState();
+    applyGrantsSearch(document.getElementById('access-grants-search').value);
+  }, 200);
+});
+document.getElementById('access-grants-filter-clear').addEventListener('click', () => {
+  document.getElementById('access-grants-filter-level').value = '';
+  document.getElementById('access-grants-filter-object').value = '';
+  document.getElementById('access-grants-filter-privilege').value = '';
+  updateGrantsFilterButtonState();
+  applyGrantsSearch(document.getElementById('access-grants-search').value);
+  grantsFilterPanel.classList.add('hidden');
 });
 
 // ---- Effective access tab — resolved server-side per selected user ----
@@ -757,6 +838,62 @@ function renderUserCatalogAccessOptions() {
 
 document.getElementById('access-user-catalog-select').addEventListener('change', e => loadUserCatalogAccess(e.target.value));
 
+// ---- Inspect tab — per-catalog user/column access, opened from Catalog explorer ----
+async function loadCatalogInspect(catalog) {
+  const tbody = document.getElementById('access-inspect-tbody');
+  const foot = document.getElementById('access-inspect-foot');
+  if (!catalog) { tbody.innerHTML = ''; foot.textContent = 'Pick a catalog to inspect, or use "Inspect" from Catalog explorer.'; return; }
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">Loading…</td></tr>';
+  try {
+    const data = await getCatalogInspect(catalog);
+    const users = data.users;
+    const totalRows = users.reduce((n, u) => n + u.access.length, 0);
+    foot.textContent = `${users.length} user${users.length === 1 ? '' : 's'}, ${totalRows} accessible object${totalRows === 1 ? '' : 's'} in ${catalog}`;
+    if (!users.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">No users have access to this catalog.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = users.flatMap(u => u.access.map((r, i) => `
+      <tr>
+        <td>${i === 0 ? escapeHtml(u.user) : ''}</td>
+        <td>${i === 0 ? escapeHtml(u.groups.join(', ') || '–') : ''}</td>
+        <td>${escapeHtml(r.schema || '–')}</td>
+        <td>${escapeHtml(r.table || '–')}</td>
+        <td><span class="kind-badge ${escapeHtml(r.kind)}">${escapeHtml(r.kind)}</span></td>
+        <td>${escapeHtml(r.privilege)}</td>
+        <td>${escapeHtml(r.via)}</td>
+        <td>${renderAccessColumns(r.columns)}</td>
+      </tr>
+    `).join('')).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red);">Could not load catalog access: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function populateInspectCatalogOptions(preselect) {
+  const sel = document.getElementById('access-inspect-catalog-select');
+  try {
+    const { catalogs } = await getCatalogTree();
+    const current = preselect || sel.value;
+    sel.innerHTML = '<option value="">Select a catalog…</option>' +
+      catalogs.map(c => `<option value="${escapeHtml(c.catalog)}">${escapeHtml(c.catalog)}</option>`).join('');
+    if (current && catalogs.some(c => c.catalog === current)) sel.value = current;
+  } catch (err) {
+    // Nice-to-have; leave the dropdown at its placeholder if this fails.
+  }
+  loadCatalogInspect(sel.value);
+}
+
+document.getElementById('access-inspect-catalog-select').addEventListener('change', e => loadCatalogInspect(e.target.value));
+
+// Opened from Catalog explorer's "Inspect" button (see renderCatalogTree).
+function inspectCatalog(catalogName) {
+  showPage('access');
+  loadAccessGovernance();
+  document.querySelector('#page-access .tab[data-tab="inspect"]').click();
+  populateInspectCatalogOptions(catalogName);
+}
+
 // ---- Tab switching ----
 document.querySelectorAll('#page-access .tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -786,9 +923,11 @@ async function loadAccessGovernance() {
     renderMostActive(mostActive.most_active);
     renderHighRisk(highRisk.high_risk);
     renderGroups(accessGroupsData, document.getElementById('access-groups-search').value);
+    populateGrantsFilterOptions();
     applyGrantsSearch(document.getElementById('access-grants-search').value);
     renderEffectiveOptions();
     renderUserCatalogAccessOptions();
+    populateInspectCatalogOptions();
     markLiveUpdated('access');
   } catch (err) {
     setAccessError(
@@ -803,6 +942,7 @@ async function loadAccessGovernance() {
     document.getElementById('access-grants-tbody').innerHTML = '';
     document.getElementById('access-effective-tbody').innerHTML = '';
     document.getElementById('access-user-catalog-tbody').innerHTML = '';
+    document.getElementById('access-inspect-tbody').innerHTML = '';
   }
 }
 
