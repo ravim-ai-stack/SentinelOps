@@ -419,20 +419,27 @@
             <button class="close-x" id="closeDrawer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </div>
 
-          <div class="step-head"><span class="step-num">1</span> Job Overview</div>
-          <table class="kv-table" id="jobs-drawer-overview"></table>
+          <div class="drawer-loading" id="jobDrawerLoading">
+            <div class="spinner"></div>
+            <p>Generating root cause &amp; remediation…</p>
+          </div>
 
-          <div class="step-head"><span class="step-num">2</span> Root Cause <span class="confidence" id="jobs-drawer-confidence">–</span></div>
-          <div class="code-box" id="jobs-drawer-rootcause"></div>
+          <div id="jobDrawerBody" class="hidden">
+            <div class="step-head"><span class="step-num">1</span> Job Overview</div>
+            <table class="kv-table" id="jobs-drawer-overview"></table>
 
-          <div class="stack-head">Stack trace / logs <span>⌄</span></div>
-          <div class="stack" id="jobs-drawer-stacktrace"></div>
+            <div class="step-head"><span class="step-num">2</span> Root Cause <span class="confidence" id="jobs-drawer-confidence">–</span></div>
+            <div class="code-box" id="jobs-drawer-rootcause"></div>
 
-          <div class="step-head"><span class="step-num">3</span> Remediation</div>
-          <table class="actions-table">
-            <tr><th>#</th><th>Remediation step</th></tr>
-            <tbody id="jobs-drawer-actions"></tbody>
-          </table>
+            <div class="stack-head">Stack trace / logs <span>⌄</span></div>
+            <div class="stack" id="jobs-drawer-stacktrace"></div>
+
+            <div class="step-head"><span class="step-num">3</span> Remediation</div>
+            <table class="actions-table">
+              <tr><th>#</th><th>Remediation step</th></tr>
+              <tbody id="jobs-drawer-actions"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
