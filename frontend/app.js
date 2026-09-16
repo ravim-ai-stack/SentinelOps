@@ -14,12 +14,35 @@ function showPage(id){
   navItems.forEach(n => n.classList.toggle('active', n.dataset.page === id));
   window.scrollTo(0,0);
 }
+
+// Global loading overlay — shown for any user-initiated load (page
+// navigation, a Refresh button) across every page, hidden again once that
+// load settles (success or failure). Background auto-refresh (startLiveRefresh)
+// calls each page's load function directly rather than through withLoading,
+// so it stays silent and never triggers this overlay.
+function showGlobalLoading() {
+  document.getElementById('global-loading-backdrop').classList.remove('hidden');
+  document.getElementById('global-loading-box').classList.remove('hidden');
+}
+function hideGlobalLoading() {
+  document.getElementById('global-loading-backdrop').classList.add('hidden');
+  document.getElementById('global-loading-box').classList.add('hidden');
+}
+async function withLoading(fn) {
+  showGlobalLoading();
+  try {
+    await fn();
+  } finally {
+    hideGlobalLoading();
+  }
+}
+
 function loadPage(id) {
-  if (id === 'dashboard') loadDashboard();
-  if (id === 'catalog') loadCatalogExplorer();
-  if (id === 'access') loadAccessGovernance();
-  if (id === 'jobs') loadJobIntelligence();
-  if (id === 'security') loadDataSecurity();
+  if (id === 'dashboard') withLoading(loadDashboard);
+  if (id === 'catalog') withLoading(loadCatalogExplorer);
+  if (id === 'access') withLoading(loadAccessGovernance);
+  if (id === 'jobs') withLoading(loadJobIntelligence);
+  if (id === 'security') withLoading(loadDataSecurity);
 }
 navItems.forEach(item => item.addEventListener('click', () => {
   showPage(item.dataset.page);
@@ -243,7 +266,7 @@ async function loadDashboard() {
 }
 
 if (!document.getElementById('page-dashboard').classList.contains('hidden')) {
-  loadDashboard();
+  withLoading(loadDashboard);
 }
 startLiveRefresh('dashboard', loadDashboard);
 
@@ -476,7 +499,7 @@ document.getElementById('cat-search').addEventListener('input', e => {
 });
 document.getElementById('cat-refresh').addEventListener('click', e => {
   e.preventDefault();
-  loadCatalogExplorer(document.getElementById('cat-search').value.trim());
+  withLoading(() => loadCatalogExplorer(document.getElementById('cat-search').value.trim()));
 });
 
 const catFilterBtn = document.getElementById('cat-filter-btn');
@@ -505,7 +528,7 @@ document.getElementById('cat-filter-clear').addEventListener('click', () => {
 });
 
 if (!document.getElementById('page-catalog').classList.contains('hidden')) {
-  loadCatalogExplorer();
+  withLoading(loadCatalogExplorer);
 }
 startLiveRefresh('catalog', () => loadCatalogExplorer(document.getElementById('cat-search').value.trim()));
 
@@ -953,11 +976,11 @@ document.getElementById('access-search').addEventListener('input', e => {
 });
 document.getElementById('access-refresh').addEventListener('click', e => {
   e.preventDefault();
-  loadAccessGovernance();
+  withLoading(loadAccessGovernance);
 });
 
 if (!document.getElementById('page-access').classList.contains('hidden')) {
-  loadAccessGovernance();
+  withLoading(loadAccessGovernance);
 }
 startLiveRefresh('access', loadAccessGovernance);
 
@@ -1188,7 +1211,7 @@ document.getElementById('jobs-search').addEventListener('input', e => {
 });
 
 if (!document.getElementById('page-jobs').classList.contains('hidden')) {
-  loadJobIntelligence();
+  withLoading(loadJobIntelligence);
 }
 startLiveRefresh('jobs', loadJobIntelligence);
 
@@ -1302,6 +1325,18 @@ function renderAccessDetail(detail, tableKey) {
   return html;
 }
 
+function renderSensitiveDetail(t) {
+  const summaryHtml = t.ai_summary
+    ? `<div class="access-detail-subhead">AI summary (ai_query)</div>
+       <div style="font-size:12.5px;color:var(--muted);margin:0 0 10px;">${escapeHtml(t.ai_summary)}</div>`
+    : '';
+  return `
+    ${summaryHtml}
+    <div class="access-detail-subhead">Access</div>
+    ${renderAccessDetail(t.access_detail, t.table)}
+  `;
+}
+
 function renderSensitiveTables(tables, term) {
   const tbody = document.getElementById('sec-tables-tbody');
   document.getElementById('sec-tables-count').textContent = tables.length;
@@ -1325,7 +1360,7 @@ function renderSensitiveTables(tables, term) {
         <td>${securityRiskBadge(t.risk)}</td>
         <td>${formatDate(t.last_altered)}</td>
       </tr>
-      <tr class="sens-detail-row${isOpen ? '' : ' hidden'}" data-detail-idx="${i}"><td colspan="7">${renderAccessDetail(t.access_detail, t.table)}</td></tr>
+      <tr class="sens-detail-row${isOpen ? '' : ' hidden'}" data-detail-idx="${i}"><td colspan="7">${renderSensitiveDetail(t)}</td></tr>
     `;
     }).join('');
 
@@ -1434,7 +1469,7 @@ document.getElementById('sec-search').addEventListener('input', e => {
 });
 document.getElementById('sec-refresh').addEventListener('click', e => {
   e.preventDefault();
-  loadDataSecurity();
+  withLoading(loadDataSecurity);
 });
 
 const secFilterBtn = document.getElementById('sec-filter-btn');
@@ -1463,6 +1498,6 @@ document.getElementById('sec-filter-clear').addEventListener('click', () => {
 });
 
 if (!document.getElementById('page-security').classList.contains('hidden')) {
-  loadDataSecurity();
+  withLoading(loadDataSecurity);
 }
 startLiveRefresh('security', loadDataSecurity);

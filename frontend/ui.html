@@ -9,6 +9,13 @@
 <body>
 <div class="app">
 
+  <!-- Global page-loading overlay — shown whenever any page is (re)loading -->
+  <div class="dim-overlay hidden" id="global-loading-backdrop"></div>
+  <div class="center-loading-box hidden" id="global-loading-box">
+    <div class="spinner"></div>
+    <p>Loading&hellip;</p>
+  </div>
+
   <!-- ===================== SIDEBAR ===================== -->
   <div class="sidebar">
     <div class="brand">
@@ -495,7 +502,7 @@
             </div>
           </div>
         </div>
-        <div class="panel-sub" style="margin-left:0;">Detected from Unity Catalog column names — heuristic, not a data scan</div>
+        <div class="panel-sub" style="margin-left:0;">Detected from Unity Catalog column names via ai_classify()/ai_similarity() — no row data is read</div>
         <div class="table-scroll">
           <table>
             <tr><th>Table</th><th>PII columns</th><th>Categories</th><th>Tags</th><th>Access (users/groups)</th><th>Risk</th><th>Last altered</th></tr>
