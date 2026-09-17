@@ -4,7 +4,7 @@ metadata (system.information_schema) through a SQL Warehouse.
 """
 
 import os
-from contextlib import contextmanager
+import threading
 
 import requests
 from databricks import sql
@@ -21,26 +21,47 @@ DATABRICKS_WAREHOUSE_ID = os.environ["DATABRICKS_WAREHOUSE_ID"].strip()
 HTTP_PATH = f"/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}"
 REST_BASE_URL = f"https://{DATABRICKS_HOST}"
 
+# Opening a SQL Warehouse connection (auth + session setup) is far slower
+# than running a query on it, so each request thread keeps its own
+# connection open and reuses it across queries instead of reconnecting
+# every time - reconnecting only if that connection has gone bad.
+_local = threading.local()
 
-@contextmanager
-def get_connection():
-    conn = sql.connect(
-        server_hostname=DATABRICKS_HOST,
-        http_path=HTTP_PATH,
-        access_token=DATABRICKS_TOKEN,
-    )
-    try:
-        yield conn
-    finally:
-        conn.close()
+
+def _get_thread_connection():
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sql.connect(
+            server_hostname=DATABRICKS_HOST,
+            http_path=HTTP_PATH,
+            access_token=DATABRICKS_TOKEN,
+        )
+        _local.conn = conn
+    return conn
+
+
+def _drop_thread_connection():
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 
 def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params)
-            columns = [c[0] for c in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    for attempt in (1, 2):
+        conn = _get_thread_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                columns = [c[0] for c in cursor.description]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        except Exception:
+            _drop_thread_connection()
+            if attempt == 2:
+                raise
 
 
 def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:

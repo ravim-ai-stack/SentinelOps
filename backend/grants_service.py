@@ -23,6 +23,11 @@ BROAD_PRIVILEGES = {"ALL_PRIVILEGES", "MODIFY"}
 # of re-querying the warehouse on every interaction.
 CACHE_SECONDS = 30
 
+# Long-lived (not created/torn down per call) so its worker threads keep
+# their warm databricks_client connections across repeated calls to
+# fetch_grants() - see the reasoning in databricks_client.py.
+_grants_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="grants")
+
 
 @ttl_cache(CACHE_SECONDS)
 def fetch_scim_users() -> list[dict]:
@@ -90,31 +95,32 @@ def fetch_grants() -> list[dict]:
     {grantee, level, object, privilege}. `grantee` is a principal name — a
     user email or a group name, straight from Unity Catalog's own grants.
     Each of these is its own Databricks round-trip (its own SQL connection),
-    so they're run concurrently rather than one after another."""
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        catalog_f = pool.submit(
-            run_query, "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
-        )
-        schema_f = pool.submit(
-            run_query,
-            """
-            SELECT grantee, catalog_name, schema_name, privilege_type
-            FROM system.information_schema.schema_privileges
-            """,
-        )
-        table_f = pool.submit(
-            run_query,
-            """
-            SELECT grantee, table_catalog, table_schema, table_name, privilege_type
-            FROM system.information_schema.table_privileges
-            """,
-        )
-        volume_f = pool.submit(_fetch_volume_privileges)
+    so they're run concurrently, on the shared _grants_pool, rather than one
+    after another."""
+    pool = _grants_pool
+    catalog_f = pool.submit(
+        run_query, "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
+    )
+    schema_f = pool.submit(
+        run_query,
+        """
+        SELECT grantee, catalog_name, schema_name, privilege_type
+        FROM system.information_schema.schema_privileges
+        """,
+    )
+    table_f = pool.submit(
+        run_query,
+        """
+        SELECT grantee, table_catalog, table_schema, table_name, privilege_type
+        FROM system.information_schema.table_privileges
+        """,
+    )
+    volume_f = pool.submit(_fetch_volume_privileges)
 
-        catalog_rows = catalog_f.result()
-        schema_rows = schema_f.result()
-        table_rows = table_f.result()
-        volume_rows = volume_f.result()
+    catalog_rows = catalog_f.result()
+    schema_rows = schema_f.result()
+    table_rows = table_f.result()
+    volume_rows = volume_f.result()
 
     grants: list[dict] = []
     for r in catalog_rows:

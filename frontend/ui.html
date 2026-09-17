@@ -9,7 +9,7 @@
 <body>
 <div class="app">
 
-  <!-- Global page-loading overlay — shown whenever any page is (re)loading -->
+  <!-- Global loading overlay — shown while an already-visible page is being refreshed (Refresh buttons) -->
   <div class="dim-overlay hidden" id="global-loading-backdrop"></div>
   <div class="center-loading-box hidden" id="global-loading-box">
     <div class="spinner"></div>
@@ -55,6 +55,17 @@
 
   <!-- ===================== MAIN ===================== -->
   <div class="main">
+
+    <!-- Per-tab navigation loading — scoped to this main content area (the
+         sidebar stays visible/clickable). Shown while the tab being navigated
+         to is fetching its own data; that tab only becomes visible once its
+         own load finishes. Each tab sets its own label (see navigateTo in app.js). -->
+    <div class="page-transition-loading hidden" id="page-transition-loading">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <p id="page-transition-loading-text">Loading&hellip;</p>
+      </div>
+    </div>
 
     <!-- =============== PAGE 1: DASHBOARD =============== -->
     <div class="page" id="page-dashboard">

@@ -15,11 +15,11 @@ function showPage(id){
   window.scrollTo(0,0);
 }
 
-// Global loading overlay — shown for any user-initiated load (page
-// navigation, a Refresh button) across every page, hidden again once that
-// load settles (success or failure). Background auto-refresh (startLiveRefresh)
-// calls each page's load function directly rather than through withLoading,
-// so it stays silent and never triggers this overlay.
+// Global loading overlay — shown while an already-visible page is being
+// refreshed (a Refresh button), hidden again once that load settles (success
+// or failure). Background auto-refresh (startLiveRefresh) calls each page's
+// load function directly rather than through withLoading, so it stays silent
+// and never triggers this overlay.
 function showGlobalLoading() {
   document.getElementById('global-loading-backdrop').classList.remove('hidden');
   document.getElementById('global-loading-box').classList.remove('hidden');
@@ -37,25 +37,50 @@ async function withLoading(fn) {
   }
 }
 
-function loadPage(id) {
-  if (id === 'dashboard') withLoading(loadDashboard);
-  if (id === 'catalog') withLoading(loadCatalogExplorer);
-  if (id === 'access') withLoading(loadAccessGovernance);
-  if (id === 'jobs') withLoading(loadJobIntelligence);
-  if (id === 'security') withLoading(loadDataSecurity);
+// Each tab fetches only its own panels, from its own endpoints, through its
+// own load function — the tabs never share a fetch or a render path.
+const PAGE_LOADERS = {
+  dashboard: { label: 'Loading dashboard…', load: () => loadDashboard() },
+  catalog: { label: 'Loading catalog explorer…', load: () => loadCatalogExplorer() },
+  access: { label: 'Loading access governance…', load: () => loadAccessGovernance() },
+  jobs: { label: 'Loading job intelligence…', load: () => loadJobIntelligence() },
+  security: { label: 'Loading data security…', load: () => loadDataSecurity() },
+};
+
+function showPageTransitionLoading(id) {
+  document.getElementById('page-transition-loading-text').textContent = PAGE_LOADERS[id].label;
+  document.getElementById('page-transition-loading').classList.remove('hidden');
 }
-navItems.forEach(item => item.addEventListener('click', () => {
-  showPage(item.dataset.page);
-  loadPage(item.dataset.page);
-}));
+function hidePageTransitionLoading() {
+  document.getElementById('page-transition-loading').classList.add('hidden');
+}
+
+// Navigates to a tab: the tab being left stays on screen (blurred, behind
+// the loading card) instead of being hidden, so the loading state shows the
+// actual screen rather than a blank one. The new tab only replaces it once
+// its own data has finished loading. currentNavTarget guards against a stale
+// navigation (e.g. the user clicks a second tab before the first tab's load
+// has settled) popping its page back up after a newer one has already shown.
+let currentNavTarget = null;
+function navigateTo(id) {
+  currentNavTarget = id;
+  navItems.forEach(n => n.classList.toggle('active', n.dataset.page === id));
+  showPageTransitionLoading(id);
+  Promise.resolve(PAGE_LOADERS[id].load()).finally(() => {
+    if (currentNavTarget !== id) return;
+    hidePageTransitionLoading();
+    showPage(id);
+    window.scrollTo(0, 0);
+  });
+}
+navItems.forEach(item => item.addEventListener('click', () => navigateTo(item.dataset.page)));
 document.querySelectorAll('[data-goto]').forEach(el => {
   el.addEventListener('click', e => {
     e.preventDefault();
-    showPage(el.dataset.goto);
-    loadPage(el.dataset.goto);
+    navigateTo(el.dataset.goto);
   });
 });
-showPage('dashboard');
+navigateTo('dashboard');
 
 // ---------------------------------------------------------------------
 // Real-time refresh — polls the backend on an interval and keeps each
@@ -265,9 +290,6 @@ async function loadDashboard() {
   }
 }
 
-if (!document.getElementById('page-dashboard').classList.contains('hidden')) {
-  withLoading(loadDashboard);
-}
 startLiveRefresh('dashboard', loadDashboard);
 
 function renderTreeTags(tags) {
@@ -527,9 +549,6 @@ document.getElementById('cat-filter-clear').addEventListener('click', () => {
   catFilterPanel.classList.add('hidden');
 });
 
-if (!document.getElementById('page-catalog').classList.contains('hidden')) {
-  withLoading(loadCatalogExplorer);
-}
 startLiveRefresh('catalog', () => loadCatalogExplorer(document.getElementById('cat-search').value.trim()));
 
 // ---------------------------------------------------------------------
@@ -911,8 +930,7 @@ document.getElementById('access-inspect-catalog-select').addEventListener('chang
 
 // Opened from Catalog explorer's "Inspect" button (see renderCatalogTree).
 function inspectCatalog(catalogName) {
-  showPage('access');
-  loadAccessGovernance();
+  navigateTo('access');
   document.querySelector('#page-access .tab[data-tab="inspect"]').click();
   populateInspectCatalogOptions(catalogName);
 }
@@ -979,9 +997,6 @@ document.getElementById('access-refresh').addEventListener('click', e => {
   withLoading(loadAccessGovernance);
 });
 
-if (!document.getElementById('page-access').classList.contains('hidden')) {
-  withLoading(loadAccessGovernance);
-}
 startLiveRefresh('access', loadAccessGovernance);
 
 // ---------------------------------------------------------------------
@@ -1210,9 +1225,6 @@ document.getElementById('jobs-search').addEventListener('input', e => {
   jobsSearchTimer = setTimeout(() => renderFailedJobsTable(jobsRunsData, e.target.value), 200);
 });
 
-if (!document.getElementById('page-jobs').classList.contains('hidden')) {
-  withLoading(loadJobIntelligence);
-}
 startLiveRefresh('jobs', loadJobIntelligence);
 
 // ---------------------------------------------------------------------
@@ -1497,7 +1509,4 @@ document.getElementById('sec-filter-clear').addEventListener('click', () => {
   secFilterPanel.classList.add('hidden');
 });
 
-if (!document.getElementById('page-security').classList.contains('hidden')) {
-  withLoading(loadDataSecurity);
-}
 startLiveRefresh('security', loadDataSecurity);

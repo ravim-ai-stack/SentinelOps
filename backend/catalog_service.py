@@ -20,6 +20,11 @@ logger = logging.getLogger("sentinelops.catalog")
 # instead of re-querying the warehouse on every interaction.
 CACHE_SECONDS = 30
 
+# Long-lived (not created/torn down per call) so its worker threads keep
+# their warm databricks_client connections across repeated calls to
+# build_full_tree() - see the reasoning on _tree_pool below.
+_tree_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="catalog-tree")
+
 
 def fetch_catalogs() -> dict[str, dict]:
     rows = run_query(
@@ -258,27 +263,27 @@ def fetch_models() -> list[dict]:
 def build_full_tree() -> list[dict]:
     # Each fetch_* below is an independent Databricks round-trip (its own SQL
     # connection, or a REST call for models) that only reads data - run them
-    # concurrently so the tree's wall-clock cost is the slowest single call
-    # rather than the sum of all of them.
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        catalogs_f = pool.submit(fetch_catalogs)
-        schemata_f = pool.submit(fetch_schemata)
-        tables_f = pool.submit(fetch_tables_and_views)
-        functions_f = pool.submit(fetch_functions)
-        volumes_f = pool.submit(fetch_volumes)
-        models_f = pool.submit(fetch_models)
-        catalog_tags_f = pool.submit(fetch_catalog_tags)
-        schema_tags_f = pool.submit(fetch_schema_tags)
-        table_tags_f = pool.submit(fetch_table_tags)
-        column_tags_f = pool.submit(fetch_column_tags)
+    # concurrently, on the shared _tree_pool, so the tree's wall-clock cost is
+    # the slowest single call rather than the sum of all of them.
+    pool = _tree_pool
+    catalogs_f = pool.submit(fetch_catalogs)
+    schemata_f = pool.submit(fetch_schemata)
+    tables_f = pool.submit(fetch_tables_and_views)
+    functions_f = pool.submit(fetch_functions)
+    volumes_f = pool.submit(fetch_volumes)
+    models_f = pool.submit(fetch_models)
+    catalog_tags_f = pool.submit(fetch_catalog_tags)
+    schema_tags_f = pool.submit(fetch_schema_tags)
+    table_tags_f = pool.submit(fetch_table_tags)
+    column_tags_f = pool.submit(fetch_column_tags)
 
-        catalogs = catalogs_f.result()
-        schemata = schemata_f.result()
-        objects = tables_f.result() + functions_f.result() + volumes_f.result() + models_f.result()
-        catalog_tags = catalog_tags_f.result()
-        schema_tags = schema_tags_f.result()
-        table_tags = table_tags_f.result()
-        column_tags = column_tags_f.result()
+    catalogs = catalogs_f.result()
+    schemata = schemata_f.result()
+    objects = tables_f.result() + functions_f.result() + volumes_f.result() + models_f.result()
+    catalog_tags = catalog_tags_f.result()
+    schema_tags = schema_tags_f.result()
+    table_tags = table_tags_f.result()
+    column_tags = column_tags_f.result()
 
     schema_buckets: dict[str, dict] = {}
     for key, s in schemata.items():
