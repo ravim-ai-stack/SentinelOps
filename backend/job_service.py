@@ -1,9 +1,9 @@
 """
-Job run service — real job-run history from Databricks system tables
-(system.lakeflow.job_run_timeline), used by the Dashboard's job-health
-panels and the Job Intelligence page. Falls back to an empty result set
-if that system table isn't enabled on this workspace's metastore, the
-same way catalog_service falls back for volumes/models.
+Job run service — real job-run history from the Databricks Jobs REST API
+(/api/2.1/jobs/runs/list), used by the Dashboard's job-health panels and
+the Job Intelligence page. This avoids requiring USE SCHEMA permissions on
+the system.lakeflow schema for the app's service principal. Falls back to
+an empty result set if the REST API call fails.
 
 Job names/tags and per-run error detail aren't in the system tables, so
 those come from the Jobs REST API (see fetch_job_registry() here and
@@ -12,7 +12,7 @@ drawer).
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from cache import ttl_cache
 from databricks_client import rest_get_all, run_query
@@ -77,38 +77,65 @@ def fetch_job_runs(days: int) -> list[dict]:
     """One row per completed job run in the last `days` days, including
     the owning job_id, end time and termination code (used by the Job
     Intelligence page; the Dashboard's job-health panels only read a
-    subset of these columns)."""
+    subset of these columns).
+
+    Uses the Jobs REST API (/api/2.1/jobs/runs/list) instead of
+    system.lakeflow.job_run_timeline to avoid requiring USE SCHEMA
+    permissions on the system.lakeflow schema for the app's service
+    principal. The REST API returns the same data (job_id, run_id,
+    result_state, start/end times, and termination code via
+    status.termination_details.code)."""
     try:
-        return run_query(
-            f"""
-            SELECT job_id, run_id, result_state, period_start_time, period_end_time, termination_code
-            FROM system.lakeflow.job_run_timeline
-            WHERE run_type = 'JOB_RUN'
-              AND period_start_time >= current_timestamp() - INTERVAL {int(days)} DAYS
-              AND result_state IS NOT NULL
-            ORDER BY period_start_time DESC
-            """
+        cutoff_ms = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
+        raw_runs = rest_get_all(
+            "/api/2.1/jobs/runs/list",
+            "runs",
+            {"completed_only": "true", "start_time_from": cutoff_ms, "limit": 25},
+            max_pages=40,
         )
+        runs = []
+        for r in raw_runs:
+            if r.get("run_type") != "JOB_RUN":
+                continue
+            state = r.get("state") or {}
+            result_state = state.get("result_state")
+            if result_state is None:
+                continue
+            status = r.get("status") or {}
+            term_details = status.get("termination_details") or {}
+            start_ms = r.get("start_time")
+            end_ms = r.get("end_time")
+            runs.append({
+                "job_id": r["job_id"],
+                "run_id": r["run_id"],
+                "result_state": result_state,
+                "period_start_time": datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc) if start_ms else None,
+                "period_end_time": datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None,
+                "termination_code": term_details.get("code"),
+            })
+        runs.sort(key=lambda r: r["period_start_time"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        return runs
     except Exception:
-        logger.warning("system.lakeflow.job_run_timeline not available on this workspace", exc_info=True)
+        logger.warning("Could not fetch job runs via Jobs REST API", exc_info=True)
         return []
 
 
 @ttl_cache(CACHE_SECONDS)
 def fetch_running_job_count() -> int:
-    """Job runs currently in progress (no terminal result_state yet)."""
+    """Job runs currently in progress (no terminal result_state yet).
+
+    Uses the Jobs REST API with active_only=true instead of
+    system.lakeflow.job_run_timeline."""
     try:
-        rows = run_query(
-            """
-            SELECT count(*) AS n
-            FROM system.lakeflow.job_run_timeline
-            WHERE run_type = 'JOB_RUN' AND result_state IS NULL
-              AND period_start_time >= current_timestamp() - INTERVAL 1 DAYS
-            """
+        raw_runs = rest_get_all(
+            "/api/2.1/jobs/runs/list",
+            "runs",
+            {"active_only": "true", "limit": 25},
+            max_pages=10,
         )
-        return int(rows[0]["n"]) if rows else 0
+        return len([r for r in raw_runs if r.get("run_type") == "JOB_RUN" and (r.get("state") or {}).get("result_state") is None])
     except Exception:
-        logger.warning("Could not count in-progress job runs", exc_info=True)
+        logger.warning("Could not count in-progress job runs via Jobs REST API", exc_info=True)
         return 0
 
 
