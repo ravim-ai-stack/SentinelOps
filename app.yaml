@@ -13,4 +13,4 @@ command: ["python", "backend/main.py"]
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
-    value: "152b63ead0b2ebfb"
+    valueFrom: sql_warehouse
