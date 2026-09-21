@@ -7,6 +7,8 @@ functions directly from each panel file, rather than duplicated here.
 
 import logging
 
+from fastapi import Request
+
 from cache import ttl_cache
 from databricks_client import run_query
 from grants_service import _is_broad, _is_sensitive
@@ -19,10 +21,25 @@ CACHE_SECONDS = 8
 
 @ttl_cache(CACHE_SECONDS)
 def fetch_current_user() -> str:
-    """The Databricks identity running these queries, for the Dashboard's
-    welcome message."""
+    """The Databricks identity running these queries (the app's service
+    principal once deployed) - used as a local-dev fallback, since running
+    outside a Databricks App there's no logged-in viewer to read from
+    request headers."""
     rows = run_query("SELECT current_user() AS user")
     return rows[0]["user"]
+
+
+def resolve_viewer_name(request: Request) -> str:
+    """The actual logged-in viewer, for the Dashboard's welcome message.
+    Databricks Apps' auth proxy forwards the identity of whoever is
+    logged in on every request, regardless of which credentials the
+    backend itself uses to query Databricks. Falls back to
+    fetch_current_user() locally, where there's no such proxy in front."""
+    for header in ("x-forwarded-preferred-username", "x-forwarded-email", "x-forwarded-user"):
+        value = request.headers.get(header)
+        if value:
+            return value
+    return fetch_current_user()
 
 
 def compute_access_risk_by_level(grants: list[dict]) -> dict[str, int]:
