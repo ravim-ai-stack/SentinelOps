@@ -22,8 +22,12 @@ CACHE_SECONDS = 30
 
 # Long-lived (not created/torn down per call) so its worker threads keep
 # their warm databricks_client connections across repeated calls to
-# build_full_tree() - see the reasoning on _tree_pool below.
-_tree_pool = ThreadPoolExecutor(max_workers=10, thread_name_prefix="catalog-tree")
+# build_full_tree() - see the reasoning on _tree_pool below. Kept small
+# (rather than one thread per fetch_* call) since each new thread opens
+# its own SQL Warehouse session on first use, and opening many sessions
+# in the same instant gets throttled by the warehouse - see
+# databricks_client._connect_gate, which this pool's size works with.
+_tree_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="catalog-tree")
 
 
 def fetch_catalogs() -> dict[str, dict]:

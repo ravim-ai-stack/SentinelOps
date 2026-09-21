@@ -13,6 +13,7 @@ credentials are available without any code branching:
 
 import os
 import threading
+import time
 
 import requests
 from databricks import sql
@@ -39,15 +40,27 @@ def _credentials_provider():
 # every time - reconnecting only if that connection has gone bad.
 _local = threading.local()
 
+# A single page load fires several panel requests at once, and
+# build_full_tree() alone fans out to 10 more threads on top of that -
+# each of those, on first use, tries to open its own brand new SQL
+# Warehouse session. Opening many sessions in the same instant gets
+# throttled/rejected by the warehouse (surfaces as a RequestError from
+# open_session), even though each individual connection is fine once
+# established. This caps how many session-opens can be in flight at
+# once; it only gates the (slow) connect step, not query execution on
+# already-open connections.
+_connect_gate = threading.Semaphore(4)
+
 
 def _get_thread_connection():
     conn = getattr(_local, "conn", None)
     if conn is None:
-        conn = sql.connect(
-            server_hostname=cfg.host,
-            http_path=HTTP_PATH,
-            credentials_provider=_credentials_provider,
-        )
+        with _connect_gate:
+            conn = sql.connect(
+                server_hostname=cfg.host,
+                http_path=HTTP_PATH,
+                credentials_provider=_credentials_provider,
+            )
         _local.conn = conn
     return conn
 
@@ -74,6 +87,7 @@ def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
             _drop_thread_connection()
             if attempt == 2:
                 raise
+            time.sleep(1)
 
 
 def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
