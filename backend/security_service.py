@@ -139,18 +139,25 @@ def _classify_chunk(names: list[str]) -> dict[str, Optional[dict]]:
 
 def _ai_classify_columns(column_names: set[str]) -> dict[str, dict]:
     """Looks up each column name in the persistent classification cache
-    first; only names never seen before are sent to the AI functions, in
-    chunks of CLASSIFY_CHUNK_SIZE. After the first classification of a
-    given name, every later call is a pure in-memory lookup — no AI call,
-    no SQL round-trip."""
+    first; only names never seen before are sent to the AI functions.
+    Classifies at most one CLASSIFY_CHUNK_SIZE batch per call — on a cold
+    cache (e.g. right after a restart) there can be hundreds of uncached
+    names, and ai_classify()/ai_similarity() are slow enough that
+    classifying all of them in one HTTP request risks exceeding a
+    request's timeout. Names beyond the first batch are simply left
+    uncached for now; the next periodic panel refresh (the frontend
+    already polls this endpoint) classifies the next batch, converging
+    to full coverage over a few refreshes instead of blocking one
+    request for everything. After a name is classified, every later call
+    is a pure in-memory lookup — no AI call, no SQL round-trip."""
     if not column_names:
         return {}
 
     with _classification_cache_lock:
         uncached = [name for name in column_names if name not in _classification_cache]
 
-    for i in range(0, len(uncached), CLASSIFY_CHUNK_SIZE):
-        chunk = uncached[i:i + CLASSIFY_CHUNK_SIZE]
+    chunk = uncached[:CLASSIFY_CHUNK_SIZE]
+    if chunk:
         classified = _classify_chunk(chunk)
         with _classification_cache_lock:
             _classification_cache.update(classified)
