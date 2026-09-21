@@ -28,7 +28,6 @@ from datetime import date, datetime, timedelta, timezone
 
 from cache import ttl_cache
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.jobs import RunType
 
 logger = logging.getLogger("sentinelops.jobs")
 
@@ -127,7 +126,6 @@ def fetch_job_runs(days: int) -> list[dict]:
 
         for run in sdk.jobs.list_runs(
             completed_only=True,
-            run_type=RunType.JOB_RUN,
             start_time_from=from_ms,
         ):
             if count >= MAX_RUNS:
@@ -168,7 +166,7 @@ def fetch_running_job_count() -> int:
     try:
         sdk = _sdk()
         count = 0
-        for _ in sdk.jobs.list_runs(active_only=True, run_type=RunType.JOB_RUN):
+        for _ in sdk.jobs.list_runs(active_only=True):
             count += 1
             if count >= MAX_RUNS:
                 break
