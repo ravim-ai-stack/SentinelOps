@@ -262,6 +262,7 @@ async function loadDashboard() {
       getDashboardPiiOverview(), getDashboardJobsTrend(), getTopCatalogs(),
     ]);
 
+    document.getElementById('dash-welcome').textContent = `Welcome, ${stats.current_user}`;
     document.getElementById('dash-stat-catalogs').textContent = stats.catalogs;
     document.getElementById('dash-stat-schemas').textContent = stats.schemas;
     document.getElementById('dash-stat-tables').textContent = stats.tables;

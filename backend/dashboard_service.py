@@ -17,6 +17,14 @@ RISK_LEVELS = ("CATALOG", "SCHEMA", "TABLE")
 CACHE_SECONDS = 8
 
 
+@ttl_cache(CACHE_SECONDS)
+def fetch_current_user() -> str:
+    """The Databricks identity running these queries, for the Dashboard's
+    welcome message."""
+    rows = run_query("SELECT current_user() AS user")
+    return rows[0]["user"]
+
+
 def compute_access_risk_by_level(grants: list[dict]) -> dict[str, int]:
     """Count distinct objects with broad or sensitive access, split by
     grant level, for the Dashboard's 'Access Risks' chart."""

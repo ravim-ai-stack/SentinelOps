@@ -1,6 +1,14 @@
 """
 Thin wrapper around databricks-sql-connector for querying Unity Catalog
 metadata (system.information_schema) through a SQL Warehouse.
+
+Auth is resolved by databricks-sdk's Config(), which picks whatever
+credentials are available without any code branching:
+  - local dev: DATABRICKS_HOST / DATABRICKS_TOKEN from backend/.env
+  - deployed as a Databricks App: the app's service-principal OAuth
+    credentials, injected automatically by the platform (no .env, no
+    secret ever committed). Browser-level login to the app itself is
+    also handled by the platform (workspace SSO) - not this file.
 """
 
 import os
@@ -8,18 +16,22 @@ import threading
 
 import requests
 from databricks import sql
+from databricks.sdk.core import Config
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABRICKS_HOST = (
-    os.environ["DATABRICKS_HOST"].strip().removeprefix("https://").removeprefix("http://").rstrip("/")
-)
-DATABRICKS_TOKEN = os.environ["DATABRICKS_TOKEN"].strip()
+cfg = Config()
+
 DATABRICKS_WAREHOUSE_ID = os.environ["DATABRICKS_WAREHOUSE_ID"].strip()
 
 HTTP_PATH = f"/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}"
-REST_BASE_URL = f"https://{DATABRICKS_HOST}"
+REST_BASE_URL = cfg.host.rstrip("/")
+
+
+def _credentials_provider():
+    return cfg.authenticate
+
 
 # Opening a SQL Warehouse connection (auth + session setup) is far slower
 # than running a query on it, so each request thread keeps its own
@@ -32,9 +44,9 @@ def _get_thread_connection():
     conn = getattr(_local, "conn", None)
     if conn is None:
         conn = sql.connect(
-            server_hostname=DATABRICKS_HOST,
+            server_hostname=cfg.host,
             http_path=HTTP_PATH,
-            access_token=DATABRICKS_TOKEN,
+            credentials_provider=_credentials_provider,
         )
         _local.conn = conn
     return conn
@@ -68,7 +80,7 @@ def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
     """GET a single-object Databricks REST API endpoint and return the parsed body."""
     resp = requests.get(
         f"{REST_BASE_URL}{path}",
-        headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+        headers=cfg.authenticate(),
         params=params,
         timeout=timeout,
     )
@@ -80,7 +92,7 @@ def rest_post(path: str, json_body: dict, timeout: int = 30) -> dict:
     """POST to a Databricks REST API endpoint (e.g. a model serving endpoint) and return the parsed body."""
     resp = requests.post(
         f"{REST_BASE_URL}{path}",
-        headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+        headers=cfg.authenticate(),
         json=json_body,
         timeout=timeout,
     )
@@ -95,7 +107,7 @@ def rest_get_all(path: str, items_key: str, params: dict | None = None, max_page
     for _ in range(max_pages):
         resp = requests.get(
             f"{REST_BASE_URL}{path}",
-            headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+            headers=cfg.authenticate(),
             params=query,
             timeout=30,
         )
@@ -116,7 +128,7 @@ def scim_get_all(path: str, page_size: int = 100) -> list[dict]:
     while True:
         resp = requests.get(
             f"{REST_BASE_URL}{path}",
-            headers={"Authorization": f"Bearer {DATABRICKS_TOKEN}"},
+            headers=cfg.authenticate(),
             params={"startIndex": start_index, "count": page_size},
             timeout=30,
         )

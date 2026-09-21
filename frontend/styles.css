@@ -37,6 +37,7 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Hel
 .topbar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;gap:16px;}
 .topbar h1{margin:0 0 4px;font-size:24px;letter-spacing:-.01em;}
 .topbar p{margin:0;color:var(--muted);font-size:14px;}
+.welcome-message{margin:0 0 4px;color:var(--blue);font-size:24px;letter-spacing:-.01em;font-weight:700;}
 .date-select{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:#fff;padding:8px 14px;border-radius:8px;font-size:13px;color:var(--ink);white-space:nowrap;}
 
 /* ---------- Stat cards ---------- */

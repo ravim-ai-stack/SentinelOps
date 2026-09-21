@@ -5,7 +5,9 @@
 // per panel, one API call per panel.
 // ---------------------------------------------------------------------
 
-const CATALOG_API_BASE = 'http://localhost:3001';
+// Same-origin: the backend serves this frontend itself (see backend/main.py),
+// so there's a single URL both locally and once deployed as a Databricks App.
+const CATALOG_API_BASE = '';
 
 async function fetchJson(path) {
   const res = await fetch(CATALOG_API_BASE + path);

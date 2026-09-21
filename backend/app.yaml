@@ -1,0 +1,16 @@
+# Databricks Apps deployment descriptor.
+#
+# No credentials live here. Databricks Apps injects the app's own
+# service-principal OAuth credentials automatically at runtime, and
+# databricks_client.py's Config() picks them up with no code changes.
+# Browser-level login to this URL (SSO / session reuse / redirect to the
+# Databricks login page) is handled entirely by the platform.
+#
+# DATABRICKS_WAREHOUSE_ID is not a secret (just a resource id) - set its
+# value here, or override it as an app environment variable in the
+# Databricks Apps UI.
+command: ["python", "main.py"]
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: "<your-sql-warehouse-id>"
