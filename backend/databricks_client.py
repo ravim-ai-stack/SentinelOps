@@ -12,7 +12,7 @@ credentials are available without any code branching:
 """
 
 import os
-import threading
+import queue
 import time
 
 import requests
@@ -35,59 +35,56 @@ def _credentials_provider():
 
 
 # Opening a SQL Warehouse connection (auth + session setup) is far slower
-# than running a query on it, so each request thread keeps its own
-# connection open and reuses it across queries instead of reconnecting
-# every time - reconnecting only if that connection has gone bad.
-_local = threading.local()
-
-# A single page load fires several panel requests at once, and
-# build_full_tree() alone fans out to 10 more threads on top of that -
-# each of those, on first use, tries to open its own brand new SQL
-# Warehouse session. Opening many sessions in the same instant gets
-# throttled/rejected by the warehouse (surfaces as a RequestError from
+# than running a query on it, so connections are pooled and reused
+# instead of opened per call. A single page load fires several panel
+# requests at once, and build_full_tree() alone fans out to several more
+# threads on top of that - if each of those got its own connection (e.g.
+# one per request-handling thread), a single page load could try to open
+# a dozen-plus brand new sessions in the same instant, which the
+# warehouse throttles/rejects (surfaces as a RequestError from
 # open_session), even though each individual connection is fine once
-# established. This caps how many session-opens can be in flight at
-# once; it only gates the (slow) connect step, not query execution on
-# already-open connections.
-_connect_gate = threading.Semaphore(4)
+# established. Bounding the pool to a small fixed size means at most
+# POOL_SIZE sessions ever get opened for the app's whole lifetime -
+# everything beyond that reuses one of those instead of opening another,
+# so extra concurrent load queues briefly for a free connection rather
+# than triggering more session-opens.
+POOL_SIZE = 4
+_pool: queue.Queue = queue.Queue(maxsize=POOL_SIZE)
+for _ in range(POOL_SIZE):
+    _pool.put(None)  # None = "slot reserved, connection not opened yet"
 
 
-def _get_thread_connection():
-    conn = getattr(_local, "conn", None)
-    if conn is None:
-        with _connect_gate:
-            conn = sql.connect(
-                server_hostname=cfg.host,
-                http_path=HTTP_PATH,
-                credentials_provider=_credentials_provider,
-            )
-        _local.conn = conn
-    return conn
-
-
-def _drop_thread_connection():
-    conn = getattr(_local, "conn", None)
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
-        _local.conn = None
+def _open_connection():
+    return sql.connect(
+        server_hostname=cfg.host,
+        http_path=HTTP_PATH,
+        credentials_provider=_credentials_provider,
+    )
 
 
 def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
-    for attempt in (1, 2):
-        conn = _get_thread_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(query, params)
-                columns = [c[0] for c in cursor.description]
-                return [dict(zip(columns, row)) for row in cursor.fetchall()]
-        except Exception:
-            _drop_thread_connection()
-            if attempt == 2:
-                raise
-            time.sleep(1)
+    conn = _pool.get()
+    try:
+        if conn is None:
+            conn = _open_connection()
+        for attempt in (1, 2):
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, params)
+                    columns = [c[0] for c in cursor.description]
+                    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                if attempt == 2:
+                    conn = None
+                    raise
+                time.sleep(1)
+                conn = _open_connection()
+    finally:
+        _pool.put(conn)  # always return a slot, even on failure (as None, so it reopens lazily next time)
 
 
 def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
