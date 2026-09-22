@@ -2,13 +2,39 @@
 #
 # No credentials live here. Databricks Apps injects the app's own
 # service-principal OAuth credentials automatically at runtime, and
-# backend/databricks_client.py's Config() picks them up with no code changes.
-# Browser-level login to this URL (SSO / session reuse / redirect to the
-# Databricks login page) is handled entirely by the platform.
+# backend/databricks_client.py's Config() picks them up with no code changes
+# - this is the fallback identity used for local dev and for any page that
+# stays service-principal-scoped (currently Job Intelligence only; see
+# job_service.py). Browser-level login to this URL (SSO / session reuse /
+# redirect to the Databricks login page) is handled entirely by the
+# platform.
 #
+# user_authorization below is what makes Dashboard / Catalog Explorer /
+# Access Governance / Data Security run each query as the logged-in viewer
+# instead: once enabled on the app's deployment, Databricks forwards the
+# viewer's own OAuth access token on every request as the
+# X-Forwarded-Access-Token header (plus X-Forwarded-Email for identity),
+# which backend/main.py's ViewerIdentityMiddleware picks up and
+# backend/databricks_client.py authenticates with.
+#
+# IMPORTANT: the exact scopes required, and whether they're declared here
+# vs. toggled in the Databricks Apps UI, has changed across Databricks Apps
+# runtime versions - confirm the current syntax/scope names against your
+# workspace's Databricks Apps docs before deploying. The scopes below are
+# the ones this app needs conceptually (SQL Warehouse query execution,
+# Unity Catalog metadata read, SCIM users/groups read) - verify the literal
+# strings.
+user_authorization:
+  scopes:
+    - sql
+    - unity-catalog
+    - scim
+
 # DATABRICKS_WAREHOUSE_ID is not a secret (just a resource id) - set its
 # value here, or override it as an app environment variable in the
-# Databricks Apps UI.
+# Databricks Apps UI. Every teammate who'll query as themselves also needs
+# "Can Use" on this warehouse (Compute > SQL Warehouses > Permissions) -
+# User Authorization alone doesn't grant that.
 command: ["python", "backend/main.py"]
 
 env:

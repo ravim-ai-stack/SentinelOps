@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from cache import ttl_cache
 from databricks_client import run_query, scim_get_all
+from request_context import submit_with_context
 
 access_logger = logging.getLogger("sentinelops.access")
 
@@ -26,6 +27,11 @@ CACHE_SECONDS = 30
 # Long-lived (not created/torn down per call) so its worker threads keep
 # their warm databricks_client connections across repeated calls to
 # fetch_grants() - see the reasoning in databricks_client.py.
+#
+# submit_with_context (not pool.submit directly) is used below because a
+# raw ThreadPoolExecutor does not propagate contextvars into its worker
+# threads - without it, these run_query calls would lose track of which
+# viewer they're running as and fall back to the service-principal identity.
 _grants_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="grants")
 
 
@@ -98,24 +104,26 @@ def fetch_grants() -> list[dict]:
     so they're run concurrently, on the shared _grants_pool, rather than one
     after another."""
     pool = _grants_pool
-    catalog_f = pool.submit(
-        run_query, "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
+    catalog_f = submit_with_context(
+        pool, run_query, "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
     )
-    schema_f = pool.submit(
+    schema_f = submit_with_context(
+        pool,
         run_query,
         """
         SELECT grantee, catalog_name, schema_name, privilege_type
         FROM system.information_schema.schema_privileges
         """,
     )
-    table_f = pool.submit(
+    table_f = submit_with_context(
+        pool,
         run_query,
         """
         SELECT grantee, table_catalog, table_schema, table_name, privilege_type
         FROM system.information_schema.table_privileges
         """,
     )
-    volume_f = pool.submit(_fetch_volume_privileges)
+    volume_f = submit_with_context(pool, _fetch_volume_privileges)
 
     catalog_rows = catalog_f.result()
     schema_rows = schema_f.result()
