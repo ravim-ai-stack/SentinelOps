@@ -86,13 +86,63 @@ def health():
 
 @app.get("/api/debug/auth")
 def debug_auth(request: Request):
-    """Debug endpoint to verify token capture."""
-    from databricks_client import get_user_token
+    """Debug endpoint to verify token capture and test catalog API."""
+    import base64
+    import json as _json
+    import requests as _requests
+    from databricks_client import (
+        get_user_token, _auth_headers, _sp_headers,
+        rest_get_all, REST_BASE_URL,
+    )
+
     token = get_user_token()
+
+    # Decode JWT payload (no verification, just to see who the token is for)
+    jwt_payload = None
+    if token and token.count(".") == 2:
+        try:
+            payload_b64 = token.split(".")[1]
+            payload_b64 += "=" * (4 - len(payload_b64) % 4)
+            jwt_payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
+        except Exception as e:
+            jwt_payload = {"error": str(e)}
+
+    # Test UC REST API with user token
+    user_catalogs = []
+    user_error = None
+    try:
+        user_catalogs = rest_get_all("/api/2.1/unity-catalog/catalogs", "catalogs")
+    except Exception as e:
+        user_error = str(e)
+
+    # Test UC REST API with service principal token
+    sp_catalogs = []
+    sp_error = None
+    try:
+        resp = _requests.get(
+            f"{REST_BASE_URL}/api/2.1/unity-catalog/catalogs",
+            headers=_sp_headers(),
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            sp_catalogs = [c.get("name") for c in resp.json().get("catalogs", [])]
+        else:
+            sp_error = f"{resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        sp_error = str(e)
+
     return {
         "has_user_token": token is not None,
         "token_preview": token[:20] + "..." if token else None,
         "header_present": "x-forwarded-access-token" in request.headers,
+        "jwt_subject": jwt_payload.get("sub") if jwt_payload else None,
+        "jwt_iss": jwt_payload.get("iss") if jwt_payload else None,
+        "jwt_scope": jwt_payload.get("scope") if jwt_payload else None,
+        "jwt_full": jwt_payload,
+        "user_token_catalogs": [c.get("name") for c in user_catalogs],
+        "user_token_error": user_error,
+        "sp_catalogs": sp_catalogs,
+        "sp_error": sp_error,
     }
 
 
