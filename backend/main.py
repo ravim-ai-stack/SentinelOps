@@ -41,6 +41,8 @@ from catalog_explorer.router import router as catalog_explorer_router
 from dashboard.router import router as dashboard_router
 from data_security.router import router as data_security_router
 from job_intelligence.router import router as job_intelligence_router
+from diagnostics import router as diagnostics_router
+
 
 app = FastAPI(title="SentinelOps API")
 
@@ -56,6 +58,7 @@ app.include_router(catalog_explorer_router)
 app.include_router(access_governance_router)
 app.include_router(job_intelligence_router)
 app.include_router(data_security_router)
+app.include_router(diagnostics_router)
 
 
 @app.get("/api/health")
