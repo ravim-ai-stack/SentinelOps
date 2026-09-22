@@ -1,6 +1,6 @@
 """
-Thin wrapper around databricks-sql-connector for querying Unity Catalog
-metadata (system.information_schema) through a SQL Warehouse.
+Connection layer to Databricks: Unity Catalog metadata (system.
+information_schema) through a SQL Warehouse, plus REST/SCIM calls.
 
 Auth picks one of two identities per call, resolved through
 request_context (see that module):
@@ -9,21 +9,24 @@ request_context (see that module):
     by the platform per-request as the logged-in viewer's own OAuth access
     token. Every query then runs, and is scoped by Unity Catalog, as that
     viewer - not the app's own identity - so each teammate only ever sees
-    what they've personally been granted.
+    what they've personally been granted. This token is a scoped OAuth
+    token meant for REST API calls (matching app.yaml's api_scopes) - not
+    usable to open a Thrift-protocol SQL Warehouse session - so run_query
+    executes it via the SQL Statement Execution REST API instead of
+    databricks-sql-connector; see run_query/_run_query_as_viewer below.
   - no viewer token (local dev, or User Authorization not enabled): falls
     back to databricks-sdk's Config(), which resolves to DATABRICKS_HOST /
     DATABRICKS_TOKEN from backend/.env locally, or the app's own
     service-principal OAuth credentials when deployed (auto-injected by the
-    platform - no .env, no secret ever committed).
+    platform - no .env, no secret ever committed). This path keeps using
+    databricks-sql-connector's pooled Thrift connections, as before.
 
 Browser-level login to the app itself (workspace SSO) is handled entirely
 by the platform - not this file.
 """
 
-import hashlib
 import os
 import queue
-import threading
 import time
 
 import requests
@@ -54,15 +57,6 @@ def _sp_credentials_provider():
     return cfg.authenticate
 
 
-def _viewer_credentials_provider(token: str):
-    # Same double-indirection shape databricks-sql-connector expects from
-    # credentials_provider (and that cfg.authenticate already has): a
-    # zero-arg callable returning another zero-arg callable that returns
-    # auth headers. The viewer's forwarded token is fixed for the life of
-    # the connection, so the inner callable just closes over it.
-    return lambda: (lambda: {"Authorization": f"Bearer {token}"})
-
-
 # Opening a SQL Warehouse connection (auth + session setup) is far slower
 # than running a query on it, so connections are pooled and reused instead
 # of opened per call. A single page load fires several panel requests at
@@ -71,93 +65,114 @@ def _viewer_credentials_provider(token: str):
 # single page load could try to open a dozen-plus brand new sessions in the
 # same instant, which the warehouse throttles/rejects (surfaces as a
 # RequestError from open_session), even though each individual connection
-# is fine once established.
+# is fine once established. Bounding the pool to a small fixed size means
+# at most POOL_SIZE sessions ever get opened for the app's whole lifetime.
 #
-# A connection is opened under one specific identity (baked into
-# credentials_provider at connect time), so it can only be reused for that
-# same identity - hence one pool per identity rather than one shared pool:
-#   - _sp_pool: the service-principal/local-dev identity (no viewer token).
-#   - _viewer_pools: one small pool per distinct forwarded viewer token
-#     (keyed by a hash of the token, never the token itself), created
-#     lazily on first use and evicted oldest-first once more than
-#     MAX_TRACKED_VIEWERS distinct viewers have queried in the app's
-#     lifetime - bounding total open sessions across however many teammates
-#     have opened the app, the same way POOL_SIZE bounds it for the old
-#     single-identity model.
+# This pool only ever holds service-principal/local-dev connections now -
+# see run_query's viewer-token branch below for why viewer-scoped queries
+# don't use this connector at all.
 POOL_SIZE = 4
-VIEWER_POOL_SIZE = 2
-MAX_TRACKED_VIEWERS = 25
 
 _sp_pool: queue.Queue = queue.Queue(maxsize=POOL_SIZE)
 for _ in range(POOL_SIZE):
     _sp_pool.put(None)  # None = "slot reserved, connection not opened yet"
 
-_viewer_pools: dict[str, queue.Queue] = {}
-_viewer_pool_order: list[str] = []  # oldest-first; re-touched keys move to the end
-_viewer_pools_lock = threading.Lock()
 
-
-def _viewer_key(token: str) -> str:
-    # Never keep the raw token as a dict key / in logs - just enough of a
-    # hash to tell viewers apart for pooling purposes.
-    return hashlib.sha256(token.encode()).hexdigest()[:16]
-
-
-def _get_pool(token: str | None) -> queue.Queue:
-    if not token:
-        return _sp_pool
-
-    key = _viewer_key(token)
-    with _viewer_pools_lock:
-        pool = _viewer_pools.get(key)
-        if pool is None:
-            pool = queue.Queue(maxsize=VIEWER_POOL_SIZE)
-            for _ in range(VIEWER_POOL_SIZE):
-                pool.put(None)
-            _viewer_pools[key] = pool
-            _viewer_pool_order.append(key)
-            if len(_viewer_pool_order) > MAX_TRACKED_VIEWERS:
-                _evict_oldest_viewer_pool()
-        elif key in _viewer_pool_order:
-            _viewer_pool_order.remove(key)
-            _viewer_pool_order.append(key)
-        return pool
-
-
-def _evict_oldest_viewer_pool() -> None:
-    # Caller already holds _viewer_pools_lock. Any connection a live request
-    # currently has checked out of the evicted pool is unaffected (it still
-    # holds that Queue object directly) - it just won't be reused once
-    # returned, since nothing points at this pool going forward.
-    oldest_key = _viewer_pool_order.pop(0)
-    oldest_pool = _viewer_pools.pop(oldest_key, None)
-    if oldest_pool is None:
-        return
-    while not oldest_pool.empty():
-        conn = oldest_pool.get_nowait()
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-
-def _open_connection(token: str | None):
-    credentials_provider = _viewer_credentials_provider(token) if token else _sp_credentials_provider
+def _open_connection():
     return sql.connect(
         server_hostname=cfg.host,
         http_path=HTTP_PATH,
-        credentials_provider=credentials_provider,
+        credentials_provider=_sp_credentials_provider,
     )
+
+
+# ---------------------------------------------------------------------------
+# Viewer-scoped queries: SQL Statement Execution REST API
+# ---------------------------------------------------------------------------
+# Databricks Apps' on-behalf-of-user token is a scoped OAuth token meant for
+# REST API calls (matching the api_scopes declared in app.yaml - sql:execute
+# for this one) - it is NOT usable to open a Thrift-protocol SQL Warehouse
+# session, which is what databricks-sql-connector's sql.connect() does below
+# for the service-principal path. Concretely: opening a session that way
+# with a viewer token fails with databricks.sql.exc.RequestError at
+# open_session, even when the viewer has "Can Use" on the warehouse and
+# every relevant Unity Catalog grant.
+#
+# sql:execute is the scope for the SQL Statement Execution REST API
+# (/api/2.0/sql/statements) instead - a plain bearer-token HTTP call, same
+# shape as rest_get/rest_post below - so viewer-scoped queries go through
+# that API rather than the connector.
+STATEMENT_API_PATH = "/api/2.0/sql/statements"
+STATEMENT_POLL_SECONDS = 1.5
+STATEMENT_MAX_WAIT_SECONDS = 120
+
+
+def _statement_parameters(params: dict | tuple) -> list[dict]:
+    if not params:
+        return []
+    if not isinstance(params, dict):
+        raise TypeError("Viewer-scoped queries only support named (dict) parameters, e.g. run_query(sql, {'x': 1})")
+    return [{"name": name, "value": None if value is None else str(value), "type": "STRING"} for name, value in params.items()]
+
+
+def _statement_chunk_rows(statement_id: str, columns: list[str], result: dict, headers: dict) -> list[dict]:
+    rows: list[list] = list(result.get("data_array") or [])
+    next_index = result.get("next_chunk_index")
+    while next_index is not None:
+        resp = requests.get(
+            f"{REST_BASE_URL}{STATEMENT_API_PATH}/{statement_id}/result/chunks/{next_index}",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        chunk = resp.json()
+        rows.extend(chunk.get("data_array") or [])
+        next_index = chunk.get("next_chunk_index")
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def _run_query_as_viewer(query: str, params: dict | tuple, token: str) -> list[dict]:
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {
+        "warehouse_id": DATABRICKS_WAREHOUSE_ID,
+        "statement": query,
+        "parameters": _statement_parameters(params),
+        "wait_timeout": "10s",
+        "format": "JSON_ARRAY",
+        "disposition": "INLINE",
+    }
+    resp = requests.post(f"{REST_BASE_URL}{STATEMENT_API_PATH}", headers=headers, json=body, timeout=30)
+    resp.raise_for_status()
+    payload = resp.json()
+    statement_id = payload["statement_id"]
+
+    deadline = time.monotonic() + STATEMENT_MAX_WAIT_SECONDS
+    while payload["status"]["state"] in ("PENDING", "RUNNING"):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"Statement {statement_id} did not complete within {STATEMENT_MAX_WAIT_SECONDS}s")
+        time.sleep(STATEMENT_POLL_SECONDS)
+        resp = requests.get(f"{REST_BASE_URL}{STATEMENT_API_PATH}/{statement_id}", headers=headers, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    state = payload["status"]["state"]
+    if state != "SUCCEEDED":
+        error = payload["status"].get("error") or {}
+        raise RuntimeError(f"Statement {statement_id} ended in state {state}: {error.get('message', error)}")
+
+    columns = [c["name"] for c in (payload.get("manifest") or {}).get("schema", {}).get("columns", [])]
+    return _statement_chunk_rows(statement_id, columns, payload.get("result") or {}, headers)
 
 
 def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
     token = request_context.user_token.get()
-    pool = _get_pool(token)
-    conn = pool.get()
+    if token:
+        return _run_query_as_viewer(query, params, token)
+
+    conn = _sp_pool.get()
     try:
         if conn is None:
-            conn = _open_connection(token)
+            conn = _open_connection()
         for attempt in (1, 2):
             try:
                 with conn.cursor() as cursor:
@@ -173,9 +188,9 @@ def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
                     conn = None
                     raise
                 time.sleep(1)
-                conn = _open_connection(token)
+                conn = _open_connection()
     finally:
-        pool.put(conn)  # always return a slot, even on failure (as None, so it reopens lazily next time)
+        _sp_pool.put(conn)  # always return a slot, even on failure (as None, so it reopens lazily next time)
 
 
 def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:

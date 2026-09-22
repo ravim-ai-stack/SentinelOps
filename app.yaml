@@ -9,4 +9,4 @@ app_accesses:
       - iam.access-control:read
       - iam.current-user:read
       - jobs:read
-      - sql:execute   
+      - sql:execute
