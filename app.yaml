@@ -7,4 +7,4 @@ env:
 app_accesses:
   - api_scopes:
       - jobs:read
-      - sql:execute
+      - unity-catalog:read    # needed for UC REST API
