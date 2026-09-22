@@ -3,3 +3,10 @@ command: ["python", "backend/main.py"]
 env:
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql-warehouse
+
+app_accesses:
+  - api_scopes:
+      - iam.access-control:read
+      - iam.current-user:read
+      - jobs:read
+      - sql:execute   
