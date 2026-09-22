@@ -2,7 +2,7 @@ command: ["python", "backend/main.py"]
 
 env:
   - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: 152b63ead0b2ebfb
+    valueFrom: sql-warehouse
 
 app_accesses:
   - api_scopes:
