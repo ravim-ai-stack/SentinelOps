@@ -127,10 +127,12 @@
 """Job intelligence page — job details drawer (Overview / Root cause /
 Remediation).
 
-Run and task detail now come from system.lakeflow via
-job_service.fetch_run_detail(), not the Jobs REST API. See job_service.py
-for why (there is no `jobs` OAuth scope for Databricks Apps user
-authorization, and the app's service principal lacks CAN_VIEW).
+Run and task detail come from system.lakeflow via
+job_service.fetch_run_detail(), not the Jobs REST API - there is no
+`jobs` OAuth scope for Databricks Apps user authorization. The queries
+run with the logged-in viewer's own token (the `sql` scope), because the
+app's service principal has no SELECT on system.lakeflow, so the Request
+is threaded through to job_service.
 
 Consequence for RCA quality: system tables record which task failed and
 its termination code, but carry no error messages or stack traces. The
@@ -144,7 +146,7 @@ re-run the model or re-query the warehouse.
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 import rca_service
 from job_intelligence import rca_store
@@ -247,12 +249,12 @@ def _empty_response(run_id: str, message: str) -> dict:
 
 
 @router.get("/api/jobs/{run_id}/details")
-def job_details(run_id: str):
+def job_details(request: Request, run_id: str):
     cached = rca_store.get_cached(run_id)
 
     if cached is None:
         try:
-            run, failed_tasks = fetch_run_detail(run_id)
+            run, failed_tasks = fetch_run_detail(request, run_id)
 
         except LookupError as exc:
             # Most often the ~10-15 min system-table ingestion lag.
@@ -273,7 +275,7 @@ def job_details(run_id: str):
                 run_id, "Could not load this run from Databricks."
             )
 
-        registry = fetch_job_registry()
+        registry = fetch_job_registry(request)
         job_id = run.get("job_id")
         info = registry.get(job_id, {})
         state = run.get("state") or {}
@@ -327,7 +329,7 @@ def job_details(run_id: str):
     failed_tasks = cached["failed_tasks"]
     rca = cached["rca"]
 
-    registry = fetch_job_registry()
+    registry = fetch_job_registry(request)
     info = registry.get(run.get("job_id"), {})
     state = run.get("state") or {}
 

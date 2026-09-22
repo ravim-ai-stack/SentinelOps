@@ -935,6 +935,7 @@ The `request` argument on the public functions is retained so the
 existing routers keep working unchanged. It is no longer used.
 """
 
+import json
 import logging
 import os
 import threading
@@ -942,6 +943,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 from databricks_client import run_query
+from viewer_sql import run_query_as_viewer, viewer_id, viewer_token
 
 logger = logging.getLogger("sentinelops.jobs")
 
@@ -959,7 +961,14 @@ _cache_lock = threading.Lock()
 
 
 def _cached(key: tuple, producer):
-    """Memoise a query result for CACHE_SECONDS, keyed on its arguments."""
+    """
+    Memoise a query result for CACHE_SECONDS, keyed on its arguments.
+
+    SECURITY: every key passed in here MUST start with the viewer id.
+    Rows are fetched with the caller's own token, so two viewers can be
+    entitled to different results - a key without the viewer id would
+    serve one user's rows to another.
+    """
     now = time.monotonic()
 
     with _cache_lock:
@@ -1064,6 +1073,17 @@ def _as_utc(value) -> datetime | None:
     if value is None:
         return None
 
+    if isinstance(value, str):
+        # Statement Execution API path already converts TIMESTAMP columns,
+        # but a column typed as STRING would arrive raw.
+        try:
+            text = value.strip().replace(" ", "T")
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            value = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
     if not isinstance(value, datetime):
         return None
 
@@ -1082,6 +1102,13 @@ def _as_tag_dict(value) -> dict:
     """
     if isinstance(value, dict):
         return value
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
 
     if isinstance(value, (list, tuple)):
         try:
@@ -1103,6 +1130,24 @@ def _workspace_clause(alias: str = "") -> str:
 
 def _workspace_params() -> dict:
     return {"workspace_id": WORKSPACE_ID} if WORKSPACE_ID else {}
+
+
+def _query(request, statement: str, params: dict) -> list[dict]:
+    """
+    Run a query as the logged-in viewer when there is one, else as the
+    app's service principal.
+
+    The viewer path is the one that matters in production: the app SP has
+    no SELECT on system.lakeflow (that needs metastore admin on the
+    `system` catalog). The SP path exists for local development, where
+    there is no forwarded token and DATABRICKS_TOKEN is your own.
+    """
+    token = viewer_token(request)
+
+    if token:
+        return run_query_as_viewer(token, statement, params)
+
+    return run_query(statement, params)
 
 
 # ---------------------------------------------------------------------------
@@ -1152,12 +1197,13 @@ def fetch_job_runs(request=None, days: int = 30) -> list[dict]:
     # window instead - wrong data, no error.
     if isinstance(request, int):
         days = request
+        request = None  # it was never a Request; don't pass it downstream
 
     try:
         params = {"days": int(days), **_workspace_params()}
         rows = _cached(
-            ("runs", int(days)),
-            lambda: run_query(_RUNS_SQL, params),
+            (viewer_id(request), "runs", int(days)),
+            lambda: _query(request, _RUNS_SQL, params),
         )
 
         mapped = [
@@ -1221,7 +1267,10 @@ def fetch_running_job_count(request=None) -> int:
     the UI if the stat card implies otherwise.
     """
     try:
-        rows = run_query(_RUNNING_SQL, _workspace_params())
+        rows = _cached(
+            (viewer_id(request), "running"),
+            lambda: _query(request, _RUNNING_SQL, _workspace_params()),
+        )
         count = int(rows[0]["running_count"]) if rows else 0
 
         logger.info("%d job runs currently in flight", count)
@@ -1271,8 +1320,8 @@ def fetch_job_registry(request=None) -> dict[int, dict]:
     """
     try:
         rows = _cached(
-            ("registry",),
-            lambda: run_query(_REGISTRY_SQL, _workspace_params()),
+            (viewer_id(request), "registry"),
+            lambda: _query(request, _REGISTRY_SQL, _workspace_params()),
         )
 
         registry: dict[int, dict] = {}
@@ -1346,7 +1395,7 @@ def _to_ms(dt: datetime | None) -> int | None:
     return int(dt.timestamp() * 1000) if dt else None
 
 
-def fetch_run_detail(run_id: int | str) -> tuple[dict, list[dict]]:
+def fetch_run_detail(request, run_id: int | str) -> tuple[dict, list[dict]]:
     """
     Load one run plus its failed tasks, in the shape the RCA drawer
     already expects from the Jobs API.
@@ -1363,7 +1412,7 @@ def fetch_run_detail(run_id: int | str) -> tuple[dict, list[dict]]:
     """
     params = {"run_id": str(run_id), **_workspace_params()}
 
-    rows = run_query(_RUN_DETAIL_SQL, params)
+    rows = _query(request, _RUN_DETAIL_SQL, params)
 
     if not rows:
         raise LookupError(
@@ -1393,7 +1442,7 @@ def fetch_run_detail(run_id: int | str) -> tuple[dict, list[dict]]:
     }
 
     try:
-        task_rows = run_query(_TASK_DETAIL_SQL, params)
+        task_rows = _query(request, _TASK_DETAIL_SQL, params)
     except Exception:
         logger.warning(
             "Could not load task detail for run %s", run_id, exc_info=True
@@ -1428,7 +1477,7 @@ def fetch_run_detail(run_id: int | str) -> tuple[dict, list[dict]]:
 
 def fetch_jobs(request=None) -> list[dict]:
     """Flat list form of the registry, for the Jobs page."""
-    registry = fetch_job_registry()
+    registry = fetch_job_registry(request)
 
     return [
         {
