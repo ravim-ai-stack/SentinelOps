@@ -1,7 +1,17 @@
 # app.yaml
-
+#
+# DATABRICKS_WAREHOUSE_ID below comes from the "sql-warehouse" resource
+# already attached to this app via the Databricks Apps UI/API (Resources
+# tab) - resources are NOT declared inline here; app.yaml only maps an
+# already-attached resource's key to an env var name via valueFrom. If
+# DATABRICKS_WAREHOUSE_ID is still missing at runtime, check that the
+# "sql-warehouse" resource is actually attached to this app in the
+# Databricks Apps UI - this env mapping alone doesn't create it.
 command: ["python", "backend/main.py"]
 
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
 
 spec_version: 2
 app:
@@ -17,10 +27,4 @@ app:
         - iam.access-control:read
         - iam.current-user:read
         - jobs:read
-        - sql:execute          # <-- ADD THIS LINE
-
-  resources:
-    - name: sql-warehouse
-      sql_warehouse:
-        id: ${DATABRICKS_SQL_WAREHOUSE_ID}   # resolved from env / app settings
-        permission: CAN_USE
+        - sql:execute
