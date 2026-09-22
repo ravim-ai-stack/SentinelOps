@@ -6,6 +6,8 @@ app:
 
   cloud:
     compute_size: MEDIUM
+    
+  command: ["python", "app.py"]
 
   app_accesses:
     - api_scopes:
