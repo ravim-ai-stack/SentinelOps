@@ -58,10 +58,18 @@ def clear_user_token():
 
 
 def _auth_headers() -> dict:
-    """Return auth headers: user token when available, else service principal."""
+    """Return auth headers: user token when available, else service principal.
+    Use this for per-user calls (catalogs, schemas, tables, SQL queries)."""
     token = get_user_token()
     if token:
         return {"Authorization": f"Bearer {token}"}
+    return cfg.authenticate()
+
+
+def _sp_headers() -> dict:
+    """Always return the service principal's auth headers.
+    Use this for admin-level calls (SCIM users/groups) that
+    regular users don't have permission for."""
     return cfg.authenticate()
 
 
@@ -145,11 +153,12 @@ def run_query(query: str, params: dict | tuple = ()) -> list[dict]:
         pool.put(conn)  # always return a slot, even on failure (as None, so it reopens lazily next time)
 
 
-def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
-    """GET a single-object Databricks REST API endpoint and return the parsed body."""
+def rest_get(path: str, params: dict | None = None, timeout: int = 30, use_sp: bool = False) -> dict:
+    """GET a single-object Databricks REST API endpoint.
+    use_sp=True to force the service principal (admin-level calls)."""
     resp = requests.get(
         f"{REST_BASE_URL}{path}",
-        headers=_auth_headers(),
+        headers=_sp_headers() if use_sp else _auth_headers(),
         params=params,
         timeout=timeout,
     )
@@ -157,11 +166,12 @@ def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
     return resp.json()
 
 
-def rest_post(path: str, json_body: dict, timeout: int = 30) -> dict:
-    """POST to a Databricks REST API endpoint (e.g. a model serving endpoint) and return the parsed body."""
+def rest_post(path: str, json_body: dict, timeout: int = 30, use_sp: bool = False) -> dict:
+    """POST to a Databricks REST API endpoint.
+    use_sp=True to force the service principal (admin-level calls)."""
     resp = requests.post(
         f"{REST_BASE_URL}{path}",
-        headers=_auth_headers(),
+        headers=_sp_headers() if use_sp else _auth_headers(),
         json=json_body,
         timeout=timeout,
     )
@@ -169,14 +179,16 @@ def rest_post(path: str, json_body: dict, timeout: int = 30) -> dict:
     return resp.json()
 
 
-def rest_get_all(path: str, items_key: str, params: dict | None = None, max_pages: int = 10) -> list[dict]:
-    """GET a paginated Databricks REST API list endpoint and return all items."""
+def rest_get_all(path: str, items_key: str, params: dict | None = None, max_pages: int = 10, use_sp: bool = False) -> list[dict]:
+    """GET a paginated Databricks REST API list endpoint.
+    use_sp=True to force the service principal (admin-level calls like Jobs API)."""
     items: list[dict] = []
     query = dict(params or {})
+    headers = _sp_headers() if use_sp else _auth_headers()
     for _ in range(max_pages):
         resp = requests.get(
             f"{REST_BASE_URL}{path}",
-            headers=_auth_headers(),
+            headers=headers,
             params=query,
             timeout=30,
         )
@@ -191,13 +203,15 @@ def rest_get_all(path: str, items_key: str, params: dict | None = None, max_page
 
 
 def scim_get_all(path: str, page_size: int = 100) -> list[dict]:
-    """GET a paginated Databricks SCIM 2.0 endpoint (Users/Groups) and return all Resources."""
+    """GET a paginated Databricks SCIM 2.0 endpoint (Users/Groups).
+    Always uses the service principal because SCIM is an admin-level API
+    that regular users don't have permission for."""
     resources: list[dict] = []
     start_index = 1
     while True:
         resp = requests.get(
             f"{REST_BASE_URL}{path}",
-            headers=_auth_headers(),
+            headers=_sp_headers(),
             params={"startIndex": start_index, "count": page_size},
             timeout=30,
         )
