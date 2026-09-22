@@ -46,6 +46,18 @@ HTTP_PATH = f"/sql/1.0/warehouses/{DATABRICKS_WAREHOUSE_ID}"
 REST_BASE_URL = cfg.host.rstrip("/")
 
 
+def _raise_for_status(resp: requests.Response) -> None:
+    """resp.raise_for_status(), but with the response body attached - Databricks
+    REST APIs return a JSON {"error_code": ..., "message": ...} body on failure
+    that a bare HTTPError swallows, making every 4xx/5xx look identical in logs.
+    Surfacing it here is what tells a real permission/scope error apart from a
+    bad request, a stale token, etc. without another round of guessing."""
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as exc:
+        raise requests.HTTPError(f"{exc} | response body: {resp.text[:2000]}", response=resp) from exc
+
+
 def _auth_headers() -> dict:
     token = request_context.user_token.get()
     if token:
@@ -124,7 +136,7 @@ def _statement_chunk_rows(statement_id: str, columns: list[str], result: dict, h
             headers=headers,
             timeout=30,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         chunk = resp.json()
         rows.extend(chunk.get("data_array") or [])
         next_index = chunk.get("next_chunk_index")
@@ -142,7 +154,7 @@ def _run_query_as_viewer(query: str, params: dict | tuple, token: str) -> list[d
         "disposition": "INLINE",
     }
     resp = requests.post(f"{REST_BASE_URL}{STATEMENT_API_PATH}", headers=headers, json=body, timeout=30)
-    resp.raise_for_status()
+    _raise_for_status(resp)
     payload = resp.json()
     statement_id = payload["statement_id"]
 
@@ -152,7 +164,7 @@ def _run_query_as_viewer(query: str, params: dict | tuple, token: str) -> list[d
             raise TimeoutError(f"Statement {statement_id} did not complete within {STATEMENT_MAX_WAIT_SECONDS}s")
         time.sleep(STATEMENT_POLL_SECONDS)
         resp = requests.get(f"{REST_BASE_URL}{STATEMENT_API_PATH}/{statement_id}", headers=headers, timeout=30)
-        resp.raise_for_status()
+        _raise_for_status(resp)
         payload = resp.json()
 
     state = payload["status"]["state"]
@@ -201,7 +213,7 @@ def rest_get(path: str, params: dict | None = None, timeout: int = 30) -> dict:
         params=params,
         timeout=timeout,
     )
-    resp.raise_for_status()
+    _raise_for_status(resp)
     return resp.json()
 
 
@@ -213,7 +225,7 @@ def rest_post(path: str, json_body: dict, timeout: int = 30) -> dict:
         json=json_body,
         timeout=timeout,
     )
-    resp.raise_for_status()
+    _raise_for_status(resp)
     return resp.json()
 
 
@@ -228,7 +240,7 @@ def rest_get_all(path: str, items_key: str, params: dict | None = None, max_page
             params=query,
             timeout=30,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         body = resp.json()
         items.extend(body.get(items_key, []))
         token = body.get("next_page_token")
@@ -249,7 +261,7 @@ def scim_get_all(path: str, page_size: int = 100) -> list[dict]:
             params={"startIndex": start_index, "count": page_size},
             timeout=30,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp)
         body = resp.json()
         batch = body.get("Resources", [])
         resources.extend(batch)
