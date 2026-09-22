@@ -148,11 +148,27 @@
 """
 Root cause analysis for a single failed job run.
 
-Databricks Jobs REST API calls use the currently logged-in Databricks
-user's x-forwarded-access-token when running inside a Databricks App.
+Run and task detail now arrive from job_service.fetch_run_detail(), which
+reads system.lakeflow, so this module no longer calls the Jobs REST API at
+all. The AI call still goes through the SQL Warehouse's ai_query().
 
-The AI RCA call through the SQL Warehouse continues to use the app's
-existing SQL authentication.
+WHAT CHANGED AND WHY IT MATTERS:
+
+    The old prompt was built from /api/2.1/jobs/runs/get-output, which
+    returned the task's actual error message, stack trace and driver
+    logs. System tables carry none of that - only which task failed and
+    a coded termination reason.
+
+    So the model is now reasoning from a failure CATEGORY, not evidence.
+    "DRIVER_ERROR on task transform_silver, 47 minutes" supports a
+    reasonable hypothesis; it does not support a specific diagnosis. The
+    prompt below says so explicitly, and confidence is clamped to
+    MAX_CONFIDENCE_WITHOUT_TRACE when no trace is present, because a
+    model handed thin evidence will still happily report 90.
+
+    If someone later restores a source of real error text, populate
+    `error_trace` / `logs` on the task dicts and both the prompt and the
+    confidence clamp pick it up automatically - no other changes needed.
 """
 
 import json
@@ -161,27 +177,35 @@ import os
 import re
 from datetime import datetime, timezone
 
-import requests
-from databricks.sdk.core import Config
-from fastapi import Request
-
-from databricks_client import rest_get, run_query
+from databricks_client import run_query
 
 logger = logging.getLogger("sentinelops.rca")
 
 MODEL_NAME = os.environ.get("MODEL_NAME", "").strip()
 
+# A root cause inferred from a termination code alone is a hypothesis.
+# Don't let the drawer present one as near-certainty.
+MAX_CONFIDENCE_WITHOUT_TRACE = 55
+
 SYSTEM_PROMPT = (
     "You are a senior data platform engineer performing root cause "
-    "analysis on a failed Databricks job. You will be given job "
-    "metadata, run metadata, error messages, and stack traces. "
+    "analysis on a failed Databricks job.\n\n"
+    "IMPORTANT - about your evidence: you are given job metadata, run "
+    "metadata, the failed task names and their Databricks termination "
+    "codes. Stack traces, exception messages and driver logs are NOT "
+    "available to you unless explicitly included below. Do not invent "
+    "specific error messages, line numbers, table names, column names "
+    "or file paths that do not appear in the input. Where the "
+    "termination code supports more than one explanation, say so and "
+    "name the most likely ones rather than picking one arbitrarily. "
+    "Set \"confidence\" to reflect how thin the evidence actually is - "
+    "a termination code alone rarely justifies more than 50.\n\n"
     "Respond with ONLY a JSON object with exactly three keys: "
     "\"root_cause\" (a concise plain-text explanation of why the job "
-    "failed), \"recommendation\" (concrete, actionable steps to fix "
-    "it, as a single plain-text string, using \"\\n\" between steps "
-    "if there are multiple), and \"confidence\" (an integer from 0 "
-    "to 100 estimating how confident you are in this root cause "
-    "given the evidence). Do not include any text outside the JSON "
+    "likely failed), \"recommendation\" (concrete, actionable steps to "
+    "diagnose and fix it, as a single plain-text string, using \"\\n\" "
+    "between steps if there are multiple), and \"confidence\" (an "
+    "integer from 0 to 100). Do not include any text outside the JSON "
     "object."
 )
 
@@ -192,162 +216,25 @@ _JSON_FENCE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-_ANSI_RE = re.compile(
-    r"\x1b\[[0-9;]*m"
-)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _truncate(
-    text: str | None,
-    limit: int = _MAX_FIELD_CHARS,
-) -> str:
+def _truncate(text: str | None, limit: int = _MAX_FIELD_CHARS) -> str:
     text = text or ""
 
-    return (
-        text
-        if len(text) <= limit
-        else text[:limit] + "... [truncated]"
+    return text if len(text) <= limit else text[:limit] + "... [truncated]"
+
+
+def _strip_ansi(text: str | None) -> str | None:
+    return _ANSI_RE.sub("", text) if text else text
+
+
+def _has_real_evidence(failed_tasks: list[dict]) -> bool:
+    """True if any task carries an actual trace or log, not just a code."""
+    return any(
+        task.get("error_trace") or task.get("logs")
+        for task in failed_tasks
     )
-
-
-def _strip_ansi(
-    text: str | None,
-) -> str | None:
-    return (
-        _ANSI_RE.sub("", text)
-        if text
-        else text
-    )
-
-
-def _viewer_rest_get(
-    request: Request,
-    path: str,
-    params: dict | None = None,
-) -> dict:
-    """
-    Call the Databricks REST API using the currently logged-in
-    user's forwarded access token.
-
-    In local development there may be no forwarded token, so
-    we fall back to the existing app/local authentication.
-    """
-
-    viewer_token = request.headers.get(
-        "x-forwarded-access-token"
-    )
-
-    if not viewer_token:
-        logger.debug(
-            "No x-forwarded-access-token found; "
-            "using default Databricks authentication."
-        )
-        return rest_get(
-            path,
-            params,
-        )
-
-    cfg = Config()
-
-    response = requests.get(
-        f"{cfg.host.rstrip('/')}{path}",
-        headers={
-            "Authorization": f"Bearer {viewer_token}",
-        },
-        params=params,
-        timeout=30,
-    )
-
-    response.raise_for_status()
-
-    return response.json()
-
-
-def _task_output(
-    request: Request,
-    task_key: str,
-    run_id: int,
-) -> dict:
-    try:
-        output = _viewer_rest_get(
-            request,
-            "/api/2.1/jobs/runs/get-output",
-            {"run_id": run_id},
-        )
-
-        return {
-            "task_key": task_key,
-            "error": _strip_ansi(
-                output.get("error")
-            ),
-            "error_trace": _strip_ansi(
-                output.get("error_trace")
-            ),
-            "logs": _strip_ansi(
-                output.get("logs")
-            ),
-        }
-
-    except Exception as exc:
-        return {
-            "task_key": task_key,
-            "error": str(exc),
-            "error_trace": None,
-            "logs": None,
-        }
-
-
-def fetch_failed_tasks(
-    request: Request,
-    run_id: int,
-) -> tuple[dict, list[dict]]:
-    """
-    Fetch run metadata and error output for each failed task.
-
-    Databricks Jobs REST API requests are executed using the
-    logged-in user's access token when available.
-    """
-
-    run = _viewer_rest_get(
-        request,
-        "/api/2.1/jobs/runs/get",
-        {"run_id": run_id},
-    )
-
-    state = run.get("state") or {}
-    tasks = run.get("tasks") or []
-
-    failed: list[dict] = []
-
-    if tasks:
-        for task in tasks:
-            task_state = task.get("state") or {}
-
-            if task_state.get("result_state") == "FAILED":
-                failed.append(
-                    _task_output(
-                        request,
-                        task.get(
-                            "task_key",
-                            "task",
-                        ),
-                        task["run_id"],
-                    )
-                )
-
-    elif state.get("result_state") == "FAILED":
-        failed.append(
-            _task_output(
-                request,
-                run.get(
-                    "run_name",
-                    "task",
-                ),
-                run["run_id"],
-            )
-        )
-
-    return run, failed
 
 
 def _build_prompt(
@@ -362,103 +249,86 @@ def _build_prompt(
     start = run.get("start_time")
     end = run.get("end_time")
 
-    duration = (
-        round((end - start) / 1000, 2)
-        if start and end
-        else None
-    )
+    duration = round((end - start) / 1000, 2) if start and end else None
 
     lines = [
         f"Job name: {job_name}",
         f"Job ID: {job_id}",
         f"Tags: {tags or {}}",
         f"Run ID: {run.get('run_id')}",
-        (
-            "Run state message: "
-            f"{state.get('state_message') or 'N/A'}"
-        ),
+        f"Run result state: {state.get('result_state') or 'N/A'}",
+        f"Run termination code: {state.get('termination_code') or 'N/A'}",
         f"Duration: {duration} seconds",
         "",
         "Failed tasks:",
     ]
 
-    for task in failed_tasks:
+    if not failed_tasks:
         lines.append(
-            f"- Task: {task['task_key']}"
+            "- (none reported individually; the run itself terminated "
+            "in the state above)"
         )
 
+    for task in failed_tasks:
+        lines.append(f"- Task: {task.get('task_key')}")
+        lines.append(f"  Result state: {task.get('result_state') or 'N/A'}")
         lines.append(
-            "  Error: "
-            f"{_truncate(task.get('error') or 'N/A')}"
+            f"  Termination code: {task.get('termination_code') or 'N/A'}"
         )
 
         if task.get("error_trace"):
             lines.append(
-                "  Stack trace: "
-                f"{_truncate(task['error_trace'])}"
+                f"  Stack trace: {_truncate(_strip_ansi(task['error_trace']))}"
             )
 
         if task.get("logs"):
-            lines.append(
-                "  Logs: "
-                f"{_truncate(task['logs'])}"
-            )
+            lines.append(f"  Logs: {_truncate(_strip_ansi(task['logs']))}")
+
+    if not _has_real_evidence(failed_tasks):
+        lines += [
+            "",
+            "NOTE: No stack traces, exception text or logs are available "
+            "for this run. Base your analysis on the termination codes "
+            "and task names above, state clearly that the diagnosis is "
+            "provisional, and make the recommendation focus on what the "
+            "engineer should check in the Databricks Jobs UI to confirm "
+            "or rule it out.",
+        ]
 
     return "\n".join(lines)
 
 
-def _parse_response(
-    content: str,
-) -> dict:
-    cleaned = _JSON_FENCE_RE.sub(
-        "",
-        content.strip(),
-    )
+def _parse_response(content: str, evidence_is_thin: bool = False) -> dict:
+    cleaned = _JSON_FENCE_RE.sub("", content.strip())
 
     try:
         parsed = json.loads(cleaned)
 
-    except (
-        json.JSONDecodeError,
-        AttributeError,
-    ):
+    except (json.JSONDecodeError, AttributeError, TypeError):
         return {
             "root_cause": cleaned,
             "recommendation": "",
-            "confidence": 70,
+            "confidence": (
+                min(70, MAX_CONFIDENCE_WITHOUT_TRACE)
+                if evidence_is_thin
+                else 70
+            ),
         }
 
     try:
-        confidence = max(
-            0,
-            min(
-                100,
-                int(
-                    parsed.get(
-                        "confidence"
-                    )
-                ),
-            ),
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
+        confidence = max(0, min(100, int(parsed.get("confidence"))))
+    except (TypeError, ValueError):
         confidence = 70
+
+    if evidence_is_thin:
+        confidence = min(confidence, MAX_CONFIDENCE_WITHOUT_TRACE)
 
     return {
         "root_cause": (
-            str(
-                parsed.get("root_cause")
-                or ""
-            ).strip()
+            str(parsed.get("root_cause") or "").strip()
             or "Model returned no root cause."
         ),
-        "recommendation": str(
-            parsed.get("recommendation")
-            or ""
-        ).strip(),
+        "recommendation": str(parsed.get("recommendation") or "").strip(),
         "confidence": confidence,
     }
 
@@ -471,16 +341,16 @@ def generate_rca(
     failed_tasks: list[dict],
 ) -> dict:
     """
-    Call the configured model endpoint through the SQL Warehouse
+    Call the configured model endpoint through the SQL Warehouse's
     ai_query() function.
 
-    This continues to use the existing SQL Warehouse authentication.
+    Raises if no model is configured or the call/parse fails - callers
+    fall back to the run's own failure detail instead.
     """
-
     if not MODEL_NAME:
-        raise RuntimeError(
-            "MODEL_NAME is not configured"
-        )
+        raise RuntimeError("MODEL_NAME is not configured")
+
+    evidence_is_thin = not _has_real_evidence(failed_tasks)
 
     full_prompt = (
         f"{SYSTEM_PROMPT}\n\n"
@@ -498,23 +368,22 @@ def generate_rca(
         ) AS response
     """
 
-    rows = run_query(
-        sql,
-        {"full_prompt": full_prompt},
-    )
+    rows = run_query(sql, {"full_prompt": full_prompt})
 
     content = rows[0]["response"]
 
-    parsed = _parse_response(
-        content
-    )
+    parsed = _parse_response(content, evidence_is_thin)
 
-    parsed["generated_at"] = (
-        datetime.now(
-            timezone.utc
-        ).isoformat()
-    )
-
+    parsed["generated_at"] = datetime.now(timezone.utc).isoformat()
     parsed["model"] = MODEL_NAME
+    parsed["evidence"] = "codes_only" if evidence_is_thin else "full"
+
+    if evidence_is_thin:
+        logger.info(
+            "RCA for job %s generated from termination codes only "
+            "(no trace available); confidence capped at %d",
+            job_id,
+            MAX_CONFIDENCE_WITHOUT_TRACE,
+        )
 
     return parsed
