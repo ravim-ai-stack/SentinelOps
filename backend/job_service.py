@@ -1,6 +1,6 @@
 """
-job_service.py — Job runs & registry via the Databricks SDK
-============================================================
+job_service.py — Job runs & registry via the Databricks REST API
+================================================================
 
 Purpose:
     Fetch Databricks Jobs and Job Runs that are visible to the
@@ -15,7 +15,7 @@ Authentication:
             ↓
         x-forwarded-access-token
             ↓
-        WorkspaceClient(token=<viewer token>)
+        Databricks REST API
             ↓
         Databricks Jobs API
 
@@ -36,21 +36,18 @@ Principal to have CAN_VIEW on every Job.
 import logging
 from datetime import date, datetime, timedelta, timezone
 
+import requests
 from fastapi import Request
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.core import Config
 
-from cache import ttl_cache
-
 logger = logging.getLogger("sentinelops.jobs")
 
-CACHE_SECONDS = 8
-REGISTRY_CACHE_SECONDS = 300
 MAX_RUNS = 5000
 
 
 # ---------------------------------------------------------------------------
-# SDK CLIENTS
+# SDK CLIENT
 # ---------------------------------------------------------------------------
 
 _client: WorkspaceClient | None = None
@@ -60,9 +57,12 @@ def _default_sdk() -> WorkspaceClient:
     """
     Default SDK client.
 
-    Used for local development when there is no forwarded viewer token.
-    In a deployed Databricks App this falls back to the App's own
-    service-principal identity.
+    Used when there is no forwarded viewer token.
+
+    In local development this uses the local DATABRICKS_* credentials.
+
+    In a deployed Databricks App this uses the App's own
+    service-principal OAuth identity.
     """
     global _client
 
@@ -72,35 +72,67 @@ def _default_sdk() -> WorkspaceClient:
     return _client
 
 
-def _viewer_sdk(request: Request) -> WorkspaceClient:
+# ---------------------------------------------------------------------------
+# VIEWER REST CLIENT
+# ---------------------------------------------------------------------------
+
+def _viewer_token(request: Request) -> str | None:
     """
-    Create a Databricks SDK client using the currently logged-in
-    Databricks user's access token.
+    Return the Databricks access token forwarded by Databricks Apps
+    for the currently logged-in browser user.
+    """
+    return request.headers.get("x-forwarded-access-token")
 
-    Databricks Apps forwards the viewer token through:
 
+def _workspace_host() -> str:
+    """
+    Get the Databricks workspace host.
+
+    Config() is safe here because we are only reading the host.
+    We do NOT create WorkspaceClient(token=viewer_token), which would
+    cause the OAuth + PAT authorization conflict.
+    """
+    cfg = Config()
+    return cfg.host.rstrip("/")
+
+
+def _viewer_rest_get(
+    request: Request,
+    path: str,
+    params: dict | None = None,
+) -> dict:
+    """
+    Execute a Databricks REST API GET request as the current viewer.
+
+    Uses:
         x-forwarded-access-token
+            ↓
+        Authorization: Bearer <viewer token>
 
-    If the header is not present, the function falls back to the
-    default SDK authentication. This keeps local development working.
+    This avoids the Databricks SDK conflict where the App's OAuth
+    credentials and the forwarded viewer token are both detected.
     """
+    token = _viewer_token(request)
 
-    viewer_token = request.headers.get("x-forwarded-access-token")
-
-    if viewer_token:
-        cfg = Config()
-
-        return WorkspaceClient(
-            host=cfg.host,
-            token=viewer_token,
+    if not token:
+        raise RuntimeError(
+            "x-forwarded-access-token is missing; "
+            "viewer REST request cannot be performed"
         )
 
-    logger.warning(
-        "x-forwarded-access-token not found; "
-        "using default Databricks SDK authentication"
+    response = requests.get(
+        f"{_workspace_host()}{path}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+        params=params,
+        timeout=30,
     )
 
-    return _default_sdk()
+    response.raise_for_status()
+
+    return response.json()
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +178,10 @@ TERMINATION_CODE_LABELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------------------------
+
 def _rs_str(rs) -> str | None:
     """Convert a Databricks SDK enum or string to a normal string."""
     if rs is None:
@@ -185,8 +221,11 @@ def fetch_job_runs(
     """
     Fetch completed Job Runs visible to the currently logged-in user.
 
-    Uses:
-        viewer token → WorkspaceClient → jobs.list_runs()
+    Deployed App:
+        x-forwarded-access-token → Jobs REST API
+
+    Local development:
+        WorkspaceClient() → jobs.list_runs()
     """
 
     try:
@@ -198,7 +237,103 @@ def fetch_job_runs(
             * 1000
         )
 
-        sdk = _viewer_sdk(request)
+        viewer_token = _viewer_token(request)
+
+        # ---------------------------------------------------------------
+        # Viewer path — use REST API directly
+        # ---------------------------------------------------------------
+        if viewer_token:
+            mapped: list[dict] = []
+            count = 0
+
+            page_token: str | None = None
+
+            while True:
+                params = {
+                    "completed_only": "true",
+                    "start_time_from": from_ms,
+                    "limit": min(100, MAX_RUNS - count),
+                }
+
+                if page_token:
+                    params["page_token"] = page_token
+
+                data = _viewer_rest_get(
+                    request,
+                    "/api/2.1/jobs/runs/list",
+                    params,
+                )
+
+                for run in data.get("runs", []):
+                    if count >= MAX_RUNS:
+                        break
+
+                    state = run.get("state") or {}
+
+                    result_state = (
+                        state.get("result_state")
+                        or state.get("life_cycle_state")
+                    )
+
+                    if not result_state:
+                        continue
+
+                    start_ms = run.get("start_time")
+                    end_ms = run.get("end_time")
+
+                    mapped.append(
+                        {
+                            "job_id": str(run.get("job_id")),
+                            "run_id": str(run.get("run_id")),
+                            "result_state": result_state,
+
+                            "period_start_time": (
+                                datetime.fromtimestamp(
+                                    start_ms / 1000,
+                                    tz=timezone.utc,
+                                )
+                                if start_ms
+                                else None
+                            ),
+
+                            "period_end_time": (
+                                datetime.fromtimestamp(
+                                    end_ms / 1000,
+                                    tz=timezone.utc,
+                                )
+                                if end_ms
+                                else None
+                            ),
+
+                            "termination_code": (
+                                state.get("termination_code")
+                                or result_state
+                            ),
+                        }
+                    )
+
+                    count += 1
+
+                if count >= MAX_RUNS:
+                    break
+
+                page_token = data.get("next_page_token")
+
+                if not page_token:
+                    break
+
+            logger.info(
+                "Fetched %d completed job runs for current viewer",
+                len(mapped),
+            )
+
+            return mapped
+
+        # ---------------------------------------------------------------
+        # Local/default path — use SDK
+        # ---------------------------------------------------------------
+
+        sdk = _default_sdk()
 
         mapped: list[dict] = []
         count = 0
@@ -255,7 +390,7 @@ def fetch_job_runs(
             count += 1
 
         logger.info(
-            "Fetched %d completed job runs for current viewer",
+            "Fetched %d completed job runs using default identity",
             len(mapped),
         )
 
@@ -282,7 +417,35 @@ def fetch_running_job_count(
     """
 
     try:
-        sdk = _viewer_sdk(request)
+        viewer_token = _viewer_token(request)
+
+        # ---------------------------------------------------------------
+        # Viewer path
+        # ---------------------------------------------------------------
+        if viewer_token:
+            data = _viewer_rest_get(
+                request,
+                "/api/2.1/jobs/runs/list",
+                {
+                    "active_only": "true",
+                    "limit": MAX_RUNS,
+                },
+            )
+
+            count = len(data.get("runs", []))
+
+            logger.info(
+                "Current viewer has %d active job runs",
+                count,
+            )
+
+            return count
+
+        # ---------------------------------------------------------------
+        # Local/default path
+        # ---------------------------------------------------------------
+
+        sdk = _default_sdk()
 
         count = 0
 
@@ -293,7 +456,7 @@ def fetch_running_job_count(
                 break
 
         logger.info(
-            "Current viewer has %d active job runs",
+            "Default identity has %d active job runs",
             count,
         )
 
@@ -329,12 +492,70 @@ def fetch_job_registry(
     """
 
     try:
-        sdk = _viewer_sdk(request)
+        viewer_token = _viewer_token(request)
 
         registry: dict[int, dict] = {}
 
-        for job in sdk.jobs.list():
+        # ---------------------------------------------------------------
+        # Viewer path — REST API
+        # ---------------------------------------------------------------
 
+        if viewer_token:
+            page_token: str | None = None
+
+            while True:
+                params = {
+                    "limit": 100,
+                }
+
+                if page_token:
+                    params["page_token"] = page_token
+
+                data = _viewer_rest_get(
+                    request,
+                    "/api/2.2/jobs/list",
+                    params,
+                )
+
+                for job in data.get("jobs", []):
+                    job_id = job.get("job_id")
+
+                    if job_id is None:
+                        continue
+
+                    settings = job.get("settings") or {}
+
+                    name = (
+                        settings.get("name")
+                        or f"job-{job_id}"
+                    )
+
+                    tags = settings.get("tags") or {}
+
+                    registry[int(job_id)] = {
+                        "name": name,
+                        "tags": tags,
+                    }
+
+                page_token = data.get("next_page_token")
+
+                if not page_token:
+                    break
+
+            logger.info(
+                "Fetched %d Jobs visible to current viewer",
+                len(registry),
+            )
+
+            return registry
+
+        # ---------------------------------------------------------------
+        # Local/default path — SDK
+        # ---------------------------------------------------------------
+
+        sdk = _default_sdk()
+
+        for job in sdk.jobs.list():
             settings = job.settings
 
             name = (
@@ -353,7 +574,7 @@ def fetch_job_registry(
             }
 
         logger.info(
-            "Fetched %d Jobs visible to current viewer",
+            "Fetched %d Jobs using default identity",
             len(registry),
         )
 
@@ -382,12 +603,73 @@ def fetch_jobs(
     """
 
     try:
-        sdk = _viewer_sdk(request)
+        viewer_token = _viewer_token(request)
 
         jobs: list[dict] = []
 
-        for job in sdk.jobs.list():
+        # ---------------------------------------------------------------
+        # Viewer path — REST API
+        # ---------------------------------------------------------------
 
+        if viewer_token:
+            page_token: str | None = None
+
+            while True:
+                params = {
+                    "limit": 100,
+                }
+
+                if page_token:
+                    params["page_token"] = page_token
+
+                data = _viewer_rest_get(
+                    request,
+                    "/api/2.2/jobs/list",
+                    params,
+                )
+
+                for job in data.get("jobs", []):
+                    job_id = job.get("job_id")
+
+                    if job_id is None:
+                        continue
+
+                    settings = job.get("settings") or {}
+
+                    name = (
+                        settings.get("name")
+                        or f"job-{job_id}"
+                    )
+
+                    tags = settings.get("tags") or {}
+
+                    jobs.append(
+                        {
+                            "job_id": str(job_id),
+                            "name": name,
+                            "tags": tags,
+                        }
+                    )
+
+                page_token = data.get("next_page_token")
+
+                if not page_token:
+                    break
+
+            logger.info(
+                "Fetched %d Jobs for current viewer",
+                len(jobs),
+            )
+
+            return jobs
+
+        # ---------------------------------------------------------------
+        # Local/default path — SDK
+        # ---------------------------------------------------------------
+
+        sdk = _default_sdk()
+
+        for job in sdk.jobs.list():
             settings = job.settings
 
             name = (
@@ -409,7 +691,7 @@ def fetch_jobs(
             )
 
         logger.info(
-            "Fetched %d Jobs for current viewer",
+            "Fetched %d Jobs using default identity",
             len(jobs),
         )
 
@@ -449,7 +731,7 @@ def format_timestamp(
     dt: datetime | None,
 ) -> str:
     if not dt:
-        return "\u2013"
+        return "–"
 
     dt = dt.astimezone()
 
@@ -471,7 +753,7 @@ def format_duration(
 ) -> str:
 
     if not start or not end:
-        return "\u2013"
+        return "–"
 
     seconds = max(
         0,
@@ -495,7 +777,7 @@ def format_timestamp_ms(
 ) -> str:
 
     if not ms:
-        return "\u2013"
+        return "–"
 
     return format_timestamp(
         datetime.fromtimestamp(ms / 1000)
@@ -508,7 +790,7 @@ def format_duration_ms(
 ) -> str:
 
     if not start_ms or not end_ms:
-        return "\u2013"
+        return "–"
 
     return format_duration(
         datetime.fromtimestamp(start_ms / 1000),
