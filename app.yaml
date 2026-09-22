@@ -1,5 +1,25 @@
-command: ["python", "backend/main.py"]
+spec_version: 2
+app:
+  name: sentinel
+  type: custom
+  source_code_path: /
 
-env:
-  - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql-warehouse
+  cloud:
+    compute_size: MEDIUM
+
+command:
+  - "uvicorn"
+  - "main:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "$DATABRICKS_APP_PORT"
+  - "--app-dir"
+  - "backend"
+
+app_accesses:
+  - api_scopes:
+      - iam.access-control:read
+      - iam.current-user:read
+      - jobs:read
+      - sql:execute
