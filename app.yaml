@@ -1,4 +1,8 @@
 # app.yaml
+
+command: ["python", "backend/main.py"]
+
+
 spec_version: 2
 app:
   name: sentinel
