@@ -1,199 +1,416 @@
-# backend/catalog_service.py
+"""
+Catalog Explorer service — builds the catalog -> schema -> object tree from
+Unity Catalog metadata (system.information_schema) plus the Unity Catalog
+REST API (for registered models).
+"""
+
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from cache import ttl_cache
-from databricks_client import rest_get_all, rest_get
+from databricks_client import rest_get_all, run_query
+from request_context import submit_with_context
 
-logger = logging.getLogger("sentinelops")
+logger = logging.getLogger("sentinelops.catalog")
 
+# Catalog explorer's stats/tree panels, and Data security's sensitive-tables/
+# recent-classifications panels, each independently need the full table
+# list - cache so repeated panel loads and filter/tag changes within a
+# live-refresh cycle (30s on the frontend) reuse one Databricks round-trip
+# instead of re-querying the warehouse on every interaction.
 CACHE_SECONDS = 30
 
-# ---------------------------------------------------------------------------
-# Fetchers — each returns the same shape as the old SQL-based version
-# ---------------------------------------------------------------------------
+# Long-lived (not created/torn down per call) so its worker threads keep
+# their warm databricks_client connections across repeated calls to
+# build_full_tree() - see the reasoning on _tree_pool below. Kept small
+# (rather than one thread per fetch_* call) since each new thread opens
+# its own SQL Warehouse session on first use, and opening many sessions
+# in the same instant gets throttled by the warehouse - see the pooling
+# in databricks_client.py, which this pool's size works with.
+#
+# submit_with_context (not pool.submit directly) is used below because a
+# raw ThreadPoolExecutor does not propagate contextvars into its worker
+# threads - without it, fetch_* calls running here would lose track of
+# which viewer they're running as and fall back to the service-principal
+# identity.
+_tree_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="catalog-tree")
+
+
+def fetch_catalogs() -> dict[str, dict]:
+    rows = run_query(
+        """
+        SELECT catalog_name, catalog_owner, comment, last_altered
+        FROM system.information_schema.catalogs
+        """
+    )
+    return {r["catalog_name"]: r for r in rows}
+
+
+def fetch_schemata() -> dict[str, dict]:
+    rows = run_query(
+        """
+        SELECT catalog_name, schema_name, schema_owner, comment, last_altered
+        FROM system.information_schema.schemata
+        WHERE schema_name != 'information_schema'
+        """
+    )
+    return {f"{r['catalog_name']}.{r['schema_name']}": r for r in rows}
+
 
 @ttl_cache(CACHE_SECONDS)
-def fetch_catalogs() -> list[dict]:
-    """List all catalogs. Returns [{"name": "...", "comment": "..."}, ...]."""
-    try:
-        items = rest_get_all("/api/2.1/unity-catalog/catalogs", "catalogs", {})
-        return [
-            {"name": c.get("name", ""), "comment": c.get("comment", "")}
-            for c in items
-        ]
-    except Exception:
-        logger.warning("Could not fetch catalogs via UC REST API", exc_info=True)
-        return []
+def fetch_tables_and_views() -> list[dict]:
+    rows = run_query(
+        """
+        SELECT table_catalog AS catalog, table_schema AS schema, table_name AS name,
+               table_type, table_owner AS owner, last_altered
+        FROM system.information_schema.tables
+        WHERE table_schema != 'information_schema'
+        """
+    )
+    out = []
+    for r in rows:
+        out.append({
+            "catalog": r["catalog"],
+            "schema": r["schema"],
+            "name": r["name"],
+            "kind": "VIEW" if r["table_type"] == "VIEW" else "TABLE",
+            "type": r["table_type"],
+            "owner": r["owner"],
+            "last_altered": r["last_altered"],
+        })
+    return out
 
 
-@ttl_cache(CACHE_SECONDS)
-def fetch_schemas(catalog: str) -> list[dict]:
-    """List schemas in a catalog. Returns [{"name": "...", "catalog": "..."}, ...]."""
+def fetch_functions() -> list[dict]:
+    rows = run_query(
+        """
+        SELECT routine_catalog AS catalog, routine_schema AS schema, routine_name AS name,
+               routine_owner AS owner, routine_type, last_altered
+        FROM system.information_schema.routines
+        WHERE routine_schema != 'information_schema'
+        """
+    )
+    return [
+        {
+            "catalog": r["catalog"],
+            "schema": r["schema"],
+            "name": r["name"],
+            "kind": "FUNCTION",
+            "type": r["routine_type"] or "FUNCTION",
+            "owner": r["owner"],
+            "last_altered": r["last_altered"],
+        }
+        for r in rows
+    ]
+
+
+def fetch_volumes() -> list[dict]:
     try:
-        items = rest_get_all(
-            "/api/2.1/unity-catalog/schemas",
-            "schemas",
-            {"catalog_name": catalog},
+        rows = run_query(
+            """
+            SELECT volume_catalog AS catalog, volume_schema AS schema, volume_name AS name,
+                   volume_type, volume_owner AS owner, last_altered
+            FROM system.information_schema.volumes
+            WHERE volume_schema != 'information_schema'
+            """
         )
-        return [
-            {"name": s.get("name", ""), "catalog": catalog}
-            for s in items
-        ]
     except Exception:
-        logger.warning(f"Could not fetch schemas for {catalog}", exc_info=True)
+        logger.warning("Volumes not available on this workspace", exc_info=True)
         return []
+    return [
+        {
+            "catalog": r["catalog"],
+            "schema": r["schema"],
+            "name": r["name"],
+            "kind": "VOLUME",
+            "type": r["volume_type"],
+            "owner": r["owner"],
+            "last_altered": r["last_altered"],
+        }
+        for r in rows
+    ]
+
+
+def _label(tag_name: str, tag_value: Optional[str]) -> str:
+    return f"{tag_name}: {tag_value}" if tag_value else tag_name
 
 
 @ttl_cache(CACHE_SECONDS)
-def fetch_tables(catalog: str, schema: str) -> list[dict]:
-    """List tables in a schema. Returns [{"name": "...", "table_type": "..."}, ...]."""
+def fetch_catalog_tags() -> dict[str, list[str]]:
+    """Unity Catalog governed tags set directly on catalogs, keyed by catalog name."""
     try:
-        items = rest_get_all(
-            "/api/2.1/unity-catalog/tables",
-            "tables",
-            {"catalog_name": catalog, "schema_name": schema},
+        rows = run_query(
+            "SELECT catalog_name, tag_name, tag_value FROM system.information_schema.catalog_tags"
         )
-        return [
-            {
-                "name": t.get("name", ""),
-                "table_type": t.get("table_type", ""),
-                "catalog": catalog,
-                "schema": schema,
-            }
-            for t in items
-        ]
     except Exception:
-        logger.warning(f"Could not fetch tables for {catalog}.{schema}", exc_info=True)
-        return []
+        logger.warning("Catalog tags not available on this workspace", exc_info=True)
+        return {}
+    by_catalog: dict[str, list[str]] = {}
+    for r in rows:
+        by_catalog.setdefault(r["catalog_name"], []).append(_label(r["tag_name"], r.get("tag_value")))
+    for tags in by_catalog.values():
+        tags.sort()
+    return by_catalog
 
 
 @ttl_cache(CACHE_SECONDS)
-def fetch_volumes(catalog: str, schema: str) -> list[dict]:
-    """List volumes in a schema. Returns [{"name": "...", "volume_type": "..."}, ...]."""
+def fetch_schema_tags() -> dict[str, list[str]]:
+    """Unity Catalog governed tags set directly on schemas, keyed by 'catalog.schema'."""
     try:
-        items = rest_get_all(
-            "/api/2.1/unity-catalog/volumes",
-            "volumes",
-            {"catalog_name": catalog, "schema_name": schema},
+        rows = run_query(
+            "SELECT catalog_name, schema_name, tag_name, tag_value FROM system.information_schema.schema_tags"
         )
-        return [
-            {
-                "name": v.get("name", ""),
-                "volume_type": v.get("volume_type", ""),
-                "catalog": catalog,
-                "schema": schema,
-            }
-            for v in items
-        ]
     except Exception:
-        logger.warning(f"Could not fetch volumes for {catalog}.{schema}", exc_info=True)
+        logger.warning("Schema tags not available on this workspace", exc_info=True)
+        return {}
+    by_schema: dict[str, list[str]] = {}
+    for r in rows:
+        key = f"{r['catalog_name']}.{r['schema_name']}"
+        by_schema.setdefault(key, []).append(_label(r["tag_name"], r.get("tag_value")))
+    for tags in by_schema.values():
+        tags.sort()
+    return by_schema
+
+
+@ttl_cache(CACHE_SECONDS)
+def fetch_table_tags() -> dict[str, list[str]]:
+    """Unity Catalog governed tags on tables, keyed by 'catalog.schema.table'.
+    Not every workspace has tagging enabled, so this degrades to no tags
+    rather than failing the whole tree/PII scan."""
+    try:
+        rows = run_query(
+            """
+            SELECT catalog_name, schema_name, table_name, tag_name, tag_value
+            FROM system.information_schema.table_tags
+            """
+        )
+    except Exception:
+        logger.warning("Table tags not available on this workspace", exc_info=True)
+        return {}
+    by_table: dict[str, list[str]] = {}
+    for r in rows:
+        key = f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}"
+        by_table.setdefault(key, []).append(_label(r["tag_name"], r.get("tag_value")))
+    for tags in by_table.values():
+        tags.sort()
+    return by_table
+
+
+@ttl_cache(CACHE_SECONDS)
+def _fetch_column_tag_rows() -> list[dict]:
+    try:
+        return run_query(
+            """
+            SELECT catalog_name, schema_name, table_name, column_name, tag_name, tag_value
+            FROM system.information_schema.column_tags
+            """
+        )
+    except Exception:
+        logger.warning("Column tags not available on this workspace", exc_info=True)
         return []
 
 
 @ttl_cache(CACHE_SECONDS)
-def fetch_catalog_tags(catalog: str) -> list[dict]:
-    """Fetch tags for a single catalog via the UC REST API.
-    Returns [{"key": "...", "value": "..."}, ...]."""
+def fetch_column_tags() -> dict[str, list[str]]:
+    """Unity Catalog governed tags on columns (e.g. auto-applied PII
+    classifications like class.email_address), rolled up to their owning
+    table and keyed by 'catalog.schema.table'. Tables are frequently tagged
+    at the column level rather than the table level, so these are merged
+    into an object's tags alongside fetch_table_tags()."""
+    by_table: dict[str, set[str]] = {}
+    for r in _fetch_column_tag_rows():
+        key = f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}"
+        by_table.setdefault(key, set()).add(_label(r["tag_name"], r.get("tag_value")))
+    return {key: sorted(tags) for key, tags in by_table.items()}
+
+
+@ttl_cache(CACHE_SECONDS)
+def fetch_column_tag_details() -> dict[str, list[dict]]:
+    """Same source as fetch_column_tags(), but keeping each column's name
+    alongside its tag instead of collapsing to just the tag labels - for
+    views (e.g. per-user access) that need to show which column a tag
+    applies to, not just that the table has one."""
+    by_table: dict[str, list[dict]] = {}
+    for r in _fetch_column_tag_rows():
+        key = f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}"
+        by_table.setdefault(key, []).append({
+            "column": r["column_name"],
+            "tag": _label(r["tag_name"], r.get("tag_value")),
+        })
+    for rows in by_table.values():
+        rows.sort(key=lambda x: (x["column"], x["tag"]))
+    return by_table
+
+
+def fetch_models() -> list[dict]:
+    """Unity Catalog registered models — via REST since information_schema
+    has no models table. Skipped gracefully if UC model registry isn't
+    enabled/accessible for this token."""
     try:
-        body = rest_get(f"/api/2.1/unity-catalog/catalogs/{catalog}/tags")
-        tags = body.get("tags", [])
-        return [
-            {"key": t.get("key", ""), "value": t.get("value", "")}
-            for t in tags
-        ]
+        models = rest_get_all("/api/2.1/unity-catalog/models", "registered_models")
     except Exception:
-        logger.warning(f"Could not fetch tags for catalog {catalog}", exc_info=True)
+        logger.warning("Registered models not available", exc_info=True)
         return []
+    return [
+        {
+            "catalog": m["catalog_name"],
+            "schema": m["schema_name"],
+            "name": m["name"],
+            "kind": "MODEL",
+            "type": m.get("securable_kind", "MODEL"),
+            "owner": m.get("owner"),
+            "last_altered": m.get("updated_at"),  # epoch millis
+        }
+        for m in models
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Tree builder — orchestrates fetchers in parallel (preserved shape)
+# Tree assembly + search
 # ---------------------------------------------------------------------------
 
-def build_full_tree() -> dict:
-    """Build the complete catalog → schema → table/volume tree.
-    Returns the same nested dict structure the dashboard expects.
-    """
-    catalogs = fetch_catalogs()
-    if not catalogs:
-        return {"catalogs": [], "totals": {"catalogs": 0, "schemas": 0, "tables": 0, "volumes": 0}}
+@ttl_cache(CACHE_SECONDS)
+def build_full_tree() -> list[dict]:
+    # Each fetch_* below is an independent Databricks round-trip (its own SQL
+    # connection, or a REST call for models) that only reads data - run them
+    # concurrently, on the shared _tree_pool, so the tree's wall-clock cost is
+    # the slowest single call rather than the sum of all of them.
+    pool = _tree_pool
+    catalogs_f = submit_with_context(pool, fetch_catalogs)
+    schemata_f = submit_with_context(pool, fetch_schemata)
+    tables_f = submit_with_context(pool, fetch_tables_and_views)
+    functions_f = submit_with_context(pool, fetch_functions)
+    volumes_f = submit_with_context(pool, fetch_volumes)
+    models_f = submit_with_context(pool, fetch_models)
+    catalog_tags_f = submit_with_context(pool, fetch_catalog_tags)
+    schema_tags_f = submit_with_context(pool, fetch_schema_tags)
+    table_tags_f = submit_with_context(pool, fetch_table_tags)
+    column_tags_f = submit_with_context(pool, fetch_column_tags)
 
-    tree: list[dict] = []
-    total_schemas = 0
-    total_tables = 0
-    total_volumes = 0
+    catalogs = catalogs_f.result()
+    schemata = schemata_f.result()
+    objects = tables_f.result() + functions_f.result() + volumes_f.result() + models_f.result()
+    catalog_tags = catalog_tags_f.result()
+    schema_tags = schema_tags_f.result()
+    table_tags = table_tags_f.result()
+    column_tags = column_tags_f.result()
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        # Submit schema fetches for all catalogs
-        schema_futures = {
-            executor.submit(fetch_schemas, c["name"]): c
-            for c in catalogs
+    schema_buckets: dict[str, dict] = {}
+    for key, s in schemata.items():
+        schema_buckets[key] = {
+            "schema": s["schema_name"],
+            "owner": s["schema_owner"],
+            "last_altered": s["last_altered"],
+            "objects": [],
+            "tags": schema_tags.get(key, []),
         }
 
-        for sf in as_completed(schema_futures):
-            cat = schema_futures[sf]
-            schemas = sf.result()
-            total_schemas += len(schemas)
+    for obj in objects:
+        key = f"{obj['catalog']}.{obj['schema']}"
+        bucket = schema_buckets.setdefault(key, {
+            "schema": obj["schema"], "owner": None, "last_altered": None, "objects": [],
+            "tags": schema_tags.get(key, []),
+        })
+        table_key = f"{obj['catalog']}.{obj['schema']}.{obj['name']}"
+        bucket["objects"].append({
+            "name": obj["name"],
+            "kind": obj["kind"],
+            "type": obj["type"],
+            "owner": obj["owner"],
+            "last_altered": obj["last_altered"],
+            "tags": sorted(set(table_tags.get(table_key, [])) | set(column_tags.get(table_key, []))),
+        })
 
-            # Submit table + volume fetches for each schema
-            table_futures = {
-                executor.submit(fetch_tables, cat["name"], s["name"]): s
-                for s in schemas
-            }
-            vol_futures = {
-                executor.submit(fetch_volumes, cat["name"], s["name"]): s
-                for s in schemas
-            }
+    catalog_buckets: dict[str, dict] = {}
+    for key, bucket in schema_buckets.items():
+        catalog_name = key.split(".", 1)[0]
+        cat = catalog_buckets.setdefault(catalog_name, {
+            "catalog": catalog_name,
+            "owner": catalogs.get(catalog_name, {}).get("catalog_owner"),
+            "schemas": [],
+            "tags": catalog_tags.get(catalog_name, []),
+        })
+        cat["schemas"].append(bucket)
 
-            schema_list: list[dict] = []
-            for s in schemas:
-                schema_list.append({
-                    "name": s["name"],
-                    "tables": [],
-                    "volumes": [],
-                })
+    for catalog_name, cat_info in catalogs.items():
+        catalog_buckets.setdefault(catalog_name, {
+            "catalog": catalog_name,
+            "owner": cat_info.get("catalog_owner"),
+            "schemas": [],
+            "tags": catalog_tags.get(catalog_name, []),
+        })
 
-            # Collect table results
-            schema_map = {s["name"]: sl for s, sl in zip(schemas, schema_list)}
-            for tf in as_completed(table_futures):
-                sch = table_futures[tf]
-                tables = tf.result()
-                total_tables += len(tables)
-                schema_map[sch["name"]]["tables"] = tables
+    tree = list(catalog_buckets.values())
+    for cat in tree:
+        cat["schemas"].sort(key=lambda s: s["schema"])
+        for s in cat["schemas"]:
+            s["objects"].sort(key=lambda o: (o["kind"], o["name"]))
+    tree.sort(key=lambda c: c["catalog"])
+    return tree
 
-            # Collect volume results
-            for vf in as_completed(vol_futures):
-                sch = vol_futures[vf]
-                volumes = vf.result()
-                total_volumes += len(volumes)
-                schema_map[sch["name"]]["volumes"] = volumes
 
-            tree.append({
-                "name": cat["name"],
-                "comment": cat.get("comment", ""),
-                "schemas": schema_list,
-            })
+def _match(name: Optional[str], needle: str) -> bool:
+    return bool(name) and needle in name.lower()
 
+
+def filter_tree(tree: list[dict], search: Optional[str], tag: Optional[str] = None) -> list[dict]:
+    needle = (search or "").strip().lower()
+    if not needle and not tag:
+        return tree
+
+    def tag_ok(obj: dict) -> bool:
+        return not tag or tag in (obj.get("tags") or [])
+
+    filtered = []
+    for cat in tree:
+        catalog_match = bool(needle and _match(cat["catalog"], needle))
+        catalog_tag_match = bool(tag and tag in (cat.get("tags") or []))
+        kept_schemas = []
+        for schema in cat["schemas"]:
+            schema_match = bool(needle and _match(schema["schema"], needle))
+            # A tag set directly on the catalog or the schema covers every
+            # object underneath it, even if no individual object carries it.
+            schema_tag_match = catalog_tag_match or bool(tag and tag in (schema.get("tags") or []))
+            if needle and (catalog_match or schema_match):
+                candidate_objects = schema["objects"]
+            elif needle:
+                candidate_objects = [o for o in schema["objects"] if _match(o["name"], needle)]
+            else:
+                candidate_objects = schema["objects"]
+            kept_objects = candidate_objects if schema_tag_match else [o for o in candidate_objects if tag_ok(o)]
+            # A bare name match with no tag filter still surfaces the (possibly
+            # empty) catalog/schema; a tag filter surfaces it when the
+            # catalog/schema itself carries the tag, even with no objects.
+            keep_empty_schema = schema_tag_match or ((catalog_match or schema_match) and not tag)
+            if kept_objects or keep_empty_schema:
+                kept_schemas.append({**schema, "objects": kept_objects})
+        keep_empty_catalog = catalog_tag_match or (catalog_match and not tag)
+        if kept_schemas or keep_empty_catalog:
+            filtered.append({**cat, "schemas": kept_schemas})
+    return filtered
+
+
+def list_distinct_tags(tree: list[dict]) -> list[str]:
+    tags: set[str] = set()
+    for cat in tree:
+        tags.update(cat.get("tags") or [])
+        for s in cat["schemas"]:
+            tags.update(s.get("tags") or [])
+            for o in s["objects"]:
+                tags.update(o.get("tags") or [])
+    return sorted(tags)
+
+
+def summarize(tree: list[dict]) -> dict:
+    schema_count = sum(len(c["schemas"]) for c in tree)
+    objects = [o for c in tree for s in c["schemas"] for o in s["objects"]]
     return {
-        "catalogs": tree,
-        "totals": {
-            "catalogs": len(catalogs),
-            "schemas": total_schemas,
-            "tables": total_tables,
-            "volumes": total_volumes,
-        },
-    }
-
-
-def summarize(tree: dict) -> dict:
-    """Flatten the tree into a summary for the dashboard stats card."""
-    totals = tree.get("totals", {})
-    catalog_names = [c["name"] for c in tree.get("catalogs", [])]
-    return {
-        "catalog_count": totals.get("catalogs", 0),
-        "schema_count": totals.get("schemas", 0),
-        "table_count": totals.get("tables", 0),
-        "volume_count": totals.get("volumes", 0),
-        "catalog_names": catalog_names,
+        "catalogs": len(tree),
+        "schemas": schema_count,
+        "tables": sum(1 for o in objects if o["kind"] in ("TABLE", "VIEW")),
+        "functions": sum(1 for o in objects if o["kind"] == "FUNCTION"),
+        "volumes": sum(1 for o in objects if o["kind"] == "VOLUME"),
+        "models": sum(1 for o in objects if o["kind"] == "MODEL"),
+        "objects": len(objects),
     }
