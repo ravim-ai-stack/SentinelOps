@@ -130,7 +130,16 @@ def _viewer_rest_get(
         timeout=30,
     )
 
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError:
+        logger.error(
+            "Databricks REST API failed: status=%s path=%s body=%s",
+            response.status_code,
+            path,
+            response.text[:2000],
+        )
+        raise
 
     return response.json()
 
