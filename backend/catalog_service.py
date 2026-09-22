@@ -10,7 +10,6 @@ from typing import Optional
 
 from cache import ttl_cache
 from databricks_client import rest_get_all, run_query
-from request_context import submit_with_context
 
 logger = logging.getLogger("sentinelops.catalog")
 
@@ -26,14 +25,8 @@ CACHE_SECONDS = 30
 # build_full_tree() - see the reasoning on _tree_pool below. Kept small
 # (rather than one thread per fetch_* call) since each new thread opens
 # its own SQL Warehouse session on first use, and opening many sessions
-# in the same instant gets throttled by the warehouse - see the pooling
-# in databricks_client.py, which this pool's size works with.
-#
-# submit_with_context (not pool.submit directly) is used below because a
-# raw ThreadPoolExecutor does not propagate contextvars into its worker
-# threads - without it, fetch_* calls running here would lose track of
-# which viewer they're running as and fall back to the service-principal
-# identity.
+# in the same instant gets throttled by the warehouse - see
+# databricks_client._connect_gate, which this pool's size works with.
 _tree_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="catalog-tree")
 
 
@@ -277,16 +270,16 @@ def build_full_tree() -> list[dict]:
     # concurrently, on the shared _tree_pool, so the tree's wall-clock cost is
     # the slowest single call rather than the sum of all of them.
     pool = _tree_pool
-    catalogs_f = submit_with_context(pool, fetch_catalogs)
-    schemata_f = submit_with_context(pool, fetch_schemata)
-    tables_f = submit_with_context(pool, fetch_tables_and_views)
-    functions_f = submit_with_context(pool, fetch_functions)
-    volumes_f = submit_with_context(pool, fetch_volumes)
-    models_f = submit_with_context(pool, fetch_models)
-    catalog_tags_f = submit_with_context(pool, fetch_catalog_tags)
-    schema_tags_f = submit_with_context(pool, fetch_schema_tags)
-    table_tags_f = submit_with_context(pool, fetch_table_tags)
-    column_tags_f = submit_with_context(pool, fetch_column_tags)
+    catalogs_f = pool.submit(fetch_catalogs)
+    schemata_f = pool.submit(fetch_schemata)
+    tables_f = pool.submit(fetch_tables_and_views)
+    functions_f = pool.submit(fetch_functions)
+    volumes_f = pool.submit(fetch_volumes)
+    models_f = pool.submit(fetch_models)
+    catalog_tags_f = pool.submit(fetch_catalog_tags)
+    schema_tags_f = pool.submit(fetch_schema_tags)
+    table_tags_f = pool.submit(fetch_table_tags)
+    column_tags_f = pool.submit(fetch_column_tags)
 
     catalogs = catalogs_f.result()
     schemata = schemata_f.result()

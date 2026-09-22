@@ -36,7 +36,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-import request_context
 from access_governance.router import router as access_governance_router
 from catalog_explorer.router import router as catalog_explorer_router
 from dashboard.router import router as dashboard_router
@@ -51,48 +50,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-class ViewerIdentityMiddleware:
-    """Databricks Apps forwards the logged-in viewer's own OAuth access
-    token on X-Forwarded-Access-Token once User Authorization is enabled on
-    the app deployment (see app.yaml). Stash it in request_context for the
-    duration of this request so databricks_client.py can authenticate as
-    the viewer instead of the app's service principal, and cache.py can key
-    cached results per-viewer. Absent locally / if User Authorization isn't
-    enabled - both context vars stay None and databricks_client.py falls
-    back to the service-principal identity exactly as before.
-
-    A plain ASGI middleware (rather than @app.middleware("http") /
-    BaseHTTPMiddleware) on purpose: BaseHTTPMiddleware runs the downstream
-    app in a separate task wired up through an in-memory stream, which does
-    not reliably propagate contextvars set beforehand. This class instead
-    stays in the same coroutine/task all the way into the route handler
-    (and from there into anyio's thread pool, which does propagate
-    contextvars), so the values set here are guaranteed visible deep in a
-    panel's call stack."""
-
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-
-        headers = dict(scope["headers"])  # raw ASGI headers: bytes keys/values
-        token = headers.get(b"x-forwarded-access-token")
-        email = headers.get(b"x-forwarded-email")
-
-        token_reset = request_context.user_token.set(token.decode() if token else None)
-        email_reset = request_context.user_email.set(email.decode() if email else None)
-        try:
-            await self.app(scope, receive, send)
-        finally:
-            request_context.user_token.reset(token_reset)
-            request_context.user_email.reset(email_reset)
-
-
-app.add_middleware(ViewerIdentityMiddleware)
 
 app.include_router(dashboard_router)
 app.include_router(catalog_explorer_router)

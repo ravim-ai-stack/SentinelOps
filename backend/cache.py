@@ -20,36 +20,15 @@ one real Databricks call per shared fetcher, not one per panel.
 This does not change the one-file-per-panel structure or response
 shapes - it only makes the shared fetch functions those panels call
 cheaper to call repeatedly and concurrently.
-
-Now that some of these fetch functions run as the forwarded viewer's own
-identity rather than always the app's service principal (see
-request_context.py / databricks_client.py), their results are
-viewer-specific - so the cache key must include the viewer, or one
-teammate's cached result would get served straight to another. See
-_viewer_cache_key below.
 """
 
-import hashlib
 import threading
 import time
 from functools import wraps
 
-import request_context
-
 _lock = threading.Lock()
 _store: dict[tuple, tuple[float, object]] = {}  # key -> (cached_at, result)
 _inflight: dict[tuple, "_Session"] = {}          # key -> in-progress call
-
-
-def _viewer_cache_key() -> str | None:
-    """None for the shared service-principal identity (unchanged behavior -
-    one cache entry for everyone); a short hash of the forwarded token for
-    a viewer-scoped call, so each viewer gets their own cache entry. Never
-    the raw token itself, to keep it out of the cache dict's keys."""
-    token = request_context.user_token.get()
-    if not token:
-        return None
-    return hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
 class _Session:
@@ -65,10 +44,7 @@ def ttl_cache(seconds: float):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            key = (
-                fn.__module__, fn.__qualname__, args, tuple(sorted(kwargs.items())),
-                _viewer_cache_key(),
-            )
+            key = (fn.__module__, fn.__qualname__, args, tuple(sorted(kwargs.items())))
             now = time.monotonic()
 
             with _lock:
