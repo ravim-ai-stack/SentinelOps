@@ -22,6 +22,7 @@ shapes - it only makes the shared fetch functions those panels call
 cheaper to call repeatedly and concurrently.
 """
 
+import hashlib
 import threading
 import time
 from functools import wraps
@@ -44,7 +45,14 @@ def ttl_cache(seconds: float):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            key = (fn.__module__, fn.__qualname__, args, tuple(sorted(kwargs.items())))
+            # Include the current user's token hash in the cache key so
+            # different users get separate cache entries (and separate
+            # single-flight de-dup) instead of seeing each other's data.
+            from databricks_client import get_user_token
+            _token = get_user_token() or ""
+            _token_hash = hashlib.md5(_token.encode()).hexdigest()[:8]
+            key = (fn.__module__, fn.__qualname__, _token_hash,
+                   args, tuple(sorted(kwargs.items())))
             now = time.monotonic()
 
             with _lock:

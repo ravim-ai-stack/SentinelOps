@@ -32,7 +32,7 @@ one URL is exposed) and is why frontend/api.js uses relative paths.
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +42,7 @@ from dashboard.router import router as dashboard_router
 from data_security.router import router as data_security_router
 from job_intelligence.router import router as job_intelligence_router
 from diagnostics import router as diagnostics_router
+from databricks_client import set_user_token, clear_user_token
 
 
 app = FastAPI(title="SentinelOps API")
@@ -52,6 +53,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def capture_user_token(request: Request, call_next):
+    """Extract the viewer's OAuth token from the forwarded header.
+    Databricks Apps injects x-forwarded-access-token when user
+    authorization is enabled on the app. This makes all downstream
+    SQL/REST calls run as the logged-in user instead of the app's
+    service principal."""
+    token = request.headers.get("x-forwarded-access-token")
+    set_user_token(token)
+    try:
+        response = await call_next(request)
+    finally:
+        clear_user_token()
+    return response
+
 
 app.include_router(dashboard_router)
 app.include_router(catalog_explorer_router)
