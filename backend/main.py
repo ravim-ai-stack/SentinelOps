@@ -84,6 +84,18 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/auth")
+def debug_auth(request: Request):
+    """Debug endpoint to verify token capture."""
+    from databricks_client import get_user_token
+    token = get_user_token()
+    return {
+        "has_user_token": token is not None,
+        "token_preview": token[:20] + "..." if token else None,
+        "header_present": "x-forwarded-access-token" in request.headers,
+    }
+
+
 # Mounted last so it never shadows the /api/* routes above - it only
 # catches whatever those routers didn't already handle (the frontend's
 # index.html, styles.css, app.js, api.js).
