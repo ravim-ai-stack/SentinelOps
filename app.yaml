@@ -27,4 +27,7 @@ app:
         - iam.access-control:read
         - iam.current-user:read
         - jobs:read
-        - sql:execute
+        - sql
+        # Confirmed from a live 403 body: "Provided OAuth token does not have
+        # required scopes: sql" - the platform's actual scope name for SQL
+        # Statement Execution API access is "sql", not "sql:execute".
