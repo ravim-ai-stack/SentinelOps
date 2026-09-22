@@ -1,10 +1,22 @@
-command: ["python", "backend/main.py"]
+# app.yaml
+spec_version: 2
+app:
+  name: sentinel
+  type: custom
+  source_code_path: /
 
-env:
-  - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql-warehouse
+  cloud:
+    compute_size: MEDIUM
 
-app_accesses:
-  - api_scopes:
-      - jobs:read
-      - unity-catalog:read    # needed for UC REST API
+  app_accesses:
+    - api_scopes:
+        - iam.access-control:read
+        - iam.current-user:read
+        - jobs:read
+        - sql:execute          # <-- ADD THIS LINE
+
+  resources:
+    - name: sql-warehouse
+      sql_warehouse:
+        id: ${DATABRICKS_SQL_WAREHOUSE_ID}   # resolved from env / app settings
+        permission: CAN_USE
