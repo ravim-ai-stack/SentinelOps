@@ -6,7 +6,7 @@ app:
 
   cloud:
     compute_size: MEDIUM
-    
+
   command: ["python", "app.py"]
 
   app_accesses:
@@ -14,10 +14,4 @@ app:
         - iam.access-control:read
         - iam.current-user:read
         - jobs:read
-        - sql:execute          # <-- ADD THIS LINE
-
-  resources:
-    - name: sql-warehouse
-      sql_warehouse:
-        id: ${DATABRICKS_SQL_WAREHOUSE_ID}   # resolved from env / app settings
-        permission: CAN_USE
+        - sql:execute
