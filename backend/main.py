@@ -113,6 +113,54 @@ def debug_tree_test(request: Request):
     }
 
 
+@app.get("/api/debug/jobs-test")
+def debug_jobs_test(request: Request):
+    """Debug endpoint to test Jobs API with user token."""
+    import requests as _requests
+    from databricks_client import (
+        get_user_token, _auth_headers, _sp_headers,
+        rest_get_all, REST_BASE_URL,
+    )
+    
+    token = get_user_token()
+    
+    # Test Jobs API with user token (via rest_get_all)
+    user_jobs = []
+    user_error = None
+    try:
+        jobs = rest_get_all("/api/2.1/jobs/list", "jobs")
+        user_jobs = [{"job_id": j["job_id"], "name": j.get("settings", {}).get("name", "")} for j in jobs[:5]]
+    except Exception as e:
+        user_error = str(e)
+    
+    # Test Jobs API with service principal
+    sp_jobs = []
+    sp_error = None
+    try:
+        resp = _requests.get(
+            f"{REST_BASE_URL}/api/2.1/jobs/list",
+            headers=_sp_headers(),
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            jobs = resp.json().get("jobs", [])
+            sp_jobs = [{"job_id": j["job_id"], "name": j.get("settings", {}).get("name", "")} for j in jobs[:5]]
+        else:
+            sp_error = f"{resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        sp_error = str(e)
+    
+    return {
+        "has_user_token": token is not None,
+        "user_jobs": user_jobs,
+        "user_jobs_count": len(user_jobs),
+        "user_error": user_error,
+        "sp_jobs": sp_jobs,
+        "sp_jobs_count": len(sp_jobs),
+        "sp_error": sp_error,
+    }
+
+
 @app.get("/api/debug/auth")
 def debug_auth(request: Request):
     """Debug endpoint to verify token capture and test catalog API."""
