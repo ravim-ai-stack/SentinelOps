@@ -188,55 +188,6 @@ def debug_auth(request: Request):
     }
 
 
-@app.get("/api/debug/jobs")
-def debug_jobs(request: Request):
-    """Debug endpoint to compare Jobs API visibility: user token vs service principal."""
-    from databricks_client import get_user_token, rest_get_all
-
-    token = get_user_token()
-
-    def _summarize(jobs: list[dict]) -> list[dict]:
-        return [
-            {
-                "job_id": j.get("job_id"),
-                "name": j.get("settings", {}).get("name"),
-                "creator": j.get("creator_user_name"),
-            }
-            for j in jobs
-        ]
-
-    # Test Jobs API with user token. Skip when no token is present,
-    # otherwise _auth_headers() silently falls back to the SP and the
-    # comparison would be meaningless.
-    user_jobs = []
-    user_error = None
-    if token:
-        try:
-            user_jobs = rest_get_all("/api/2.1/jobs/list", "jobs", params={"limit": 100})
-        except Exception as e:
-            user_error = str(e)
-    else:
-        user_error = "No user token (x-forwarded-access-token header missing)"
-
-    # Test Jobs API with service principal token (for comparison)
-    sp_jobs = []
-    sp_error = None
-    try:
-        sp_jobs = rest_get_all("/api/2.1/jobs/list", "jobs", params={"limit": 100}, use_sp=True)
-    except Exception as e:
-        sp_error = str(e)
-
-    return {
-        "has_user_token": token is not None,
-        "user_jobs": _summarize(user_jobs),
-        "user_jobs_count": len(user_jobs),
-        "user_error": user_error,
-        "sp_jobs": _summarize(sp_jobs),
-        "sp_jobs_count": len(sp_jobs),
-        "sp_error": sp_error,
-    }
-
-
 # Mounted last so it never shadows the /api/* routes above - it only
 # catches whatever those routers didn't already handle (the frontend's
 # index.html, styles.css, app.js, api.js).
