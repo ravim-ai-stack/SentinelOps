@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from cache import ttl_cache
-from databricks_client import rest_get_all, run_query
+from databricks_client import rest_get_all, run_query, preserve_context
 
 logger = logging.getLogger("sentinelops.catalog")
 
@@ -270,16 +270,19 @@ def build_full_tree() -> list[dict]:
     # concurrently, on the shared _tree_pool, so the tree's wall-clock cost is
     # the slowest single call rather than the sum of all of them.
     pool = _tree_pool
-    catalogs_f = pool.submit(fetch_catalogs)
-    schemata_f = pool.submit(fetch_schemata)
-    tables_f = pool.submit(fetch_tables_and_views)
-    functions_f = pool.submit(fetch_functions)
-    volumes_f = pool.submit(fetch_volumes)
-    models_f = pool.submit(fetch_models)
-    catalog_tags_f = pool.submit(fetch_catalog_tags)
-    schema_tags_f = pool.submit(fetch_schema_tags)
-    table_tags_f = pool.submit(fetch_table_tags)
-    column_tags_f = pool.submit(fetch_column_tags)
+    # CRITICAL: Wrap all fetch functions with preserve_context() so the user token
+    # ContextVar is propagated to worker threads. Without this, worker threads see
+    # get_user_token() = None and fall back to the service principal.
+    catalogs_f = pool.submit(preserve_context(fetch_catalogs))
+    schemata_f = pool.submit(preserve_context(fetch_schemata))
+    tables_f = pool.submit(preserve_context(fetch_tables_and_views))
+    functions_f = pool.submit(preserve_context(fetch_functions))
+    volumes_f = pool.submit(preserve_context(fetch_volumes))
+    models_f = pool.submit(preserve_context(fetch_models))
+    catalog_tags_f = pool.submit(preserve_context(fetch_catalog_tags))
+    schema_tags_f = pool.submit(preserve_context(fetch_schema_tags))
+    table_tags_f = pool.submit(preserve_context(fetch_table_tags))
+    column_tags_f = pool.submit(preserve_context(fetch_column_tags))
 
     catalogs = catalogs_f.result()
     schemata = schemata_f.result()
