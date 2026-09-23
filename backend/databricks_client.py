@@ -15,7 +15,8 @@ import hashlib
 import os
 import queue
 import time
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
+from functools import wraps
 
 import requests
 from databricks import sql
@@ -55,6 +56,24 @@ def get_user_token() -> str | None:
 
 def clear_user_token():
     _user_token.set(None)
+
+
+def preserve_context(fn):
+    """Decorator to preserve ContextVars when calling a function in a ThreadPoolExecutor.
+    Use this when submitting work to executor.submit() that needs access to get_user_token().
+    
+    Example:
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(preserve_context(fetch_schemas), catalog_name): catalog
+                for catalog in catalogs
+            }
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        ctx = copy_context()
+        return ctx.run(fn, *args, **kwargs)
+    return wrapper
 
 
 def _auth_headers() -> dict:
