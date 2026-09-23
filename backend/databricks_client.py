@@ -59,20 +59,21 @@ def clear_user_token():
 
 
 def preserve_context(fn):
-    """Decorator to preserve ContextVars when calling a function in a ThreadPoolExecutor.
-    Use this when submitting work to executor.submit() that needs access to get_user_token().
+    """Capture the calling thread's context NOW and run fn within it LATER.
     
-    Example:
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(preserve_context(fetch_schemas), catalog_name): catalog
-                for catalog in catalogs
-            }
+    Critical: copy_context() must be called HERE (in the calling thread, which
+    has the user token ContextVar set), NOT inside the wrapper (which runs in a
+    worker thread with an empty context). If copy_context() is deferred into the
+    wrapper, the worker thread's empty context gets copied instead of the
+    caller's, and the user token is lost.
+    
+    Usage with ThreadPoolExecutor:
+        pool.submit(preserve_context(fetch_catalogs))
     """
+    ctx = copy_context()   # capture context in the CALLING thread
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        ctx = copy_context()
-        return ctx.run(fn, *args, **kwargs)
+        return ctx.run(fn, *args, **kwargs)   # replay in the WORKER thread
     return wrapper
 
 
