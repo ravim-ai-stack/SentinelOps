@@ -269,6 +269,8 @@ def build_full_tree() -> list[dict]:
     # connection, or a REST call for models) that only reads data - run them
     # concurrently, on the shared _tree_pool, so the tree's wall-clock cost is
     # the slowest single call rather than the sum of all of them.
+    from databricks_client import get_user_token
+    logger.info(f"build_full_tree called with user_token={'present' if get_user_token() else 'MISSING'}")
     pool = _tree_pool
     # CRITICAL: Wrap all fetch functions with preserve_context() so the user token
     # ContextVar is propagated to worker threads. Without this, worker threads see
