@@ -89,14 +89,27 @@ def debug_tree_test(request: Request):
     """Debug endpoint to test build_full_tree without cache."""
     from catalog_service import fetch_catalogs
     from databricks_client import get_user_token
+    import catalog_service
     
     token = get_user_token()
     catalogs = fetch_catalogs()
     
+    # Call the UNCACHED version by accessing the wrapped function directly
+    # The @ttl_cache decorator stores the original function as __wrapped__
+    if hasattr(catalog_service.build_full_tree, '__wrapped__'):
+        tree_uncached = catalog_service.build_full_tree.__wrapped__()
+    else:
+        # Fallback: call the cached version
+        tree_uncached = catalog_service.build_full_tree()
+    
+    catalog_names_in_tree = [cat["catalog"] for cat in tree_uncached] if tree_uncached else []
+    
     return {
         "has_user_token": token is not None,
         "catalogs_from_fetch_catalogs": list(catalogs.keys()) if catalogs else [],
-        "test_in_catalogs": "test" in catalogs if catalogs else False,
+        "test_in_fetch_catalogs": "test" in catalogs if catalogs else False,
+        "catalogs_from_build_full_tree_uncached": catalog_names_in_tree,
+        "test_in_tree": "test" in catalog_names_in_tree,
     }
 
 
