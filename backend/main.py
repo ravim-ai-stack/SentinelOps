@@ -84,6 +84,22 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/tree-test")
+def debug_tree_test(request: Request):
+    """Debug endpoint to test build_full_tree without cache."""
+    from catalog_service import fetch_catalogs
+    from databricks_client import get_user_token
+    
+    token = get_user_token()
+    catalogs = fetch_catalogs()
+    
+    return {
+        "has_user_token": token is not None,
+        "catalogs_from_fetch_catalogs": list(catalogs.keys()) if catalogs else [],
+        "test_in_catalogs": "test" in catalogs if catalogs else False,
+    }
+
+
 @app.get("/api/debug/auth")
 def debug_auth(request: Request):
     """Debug endpoint to verify token capture and test catalog API."""
