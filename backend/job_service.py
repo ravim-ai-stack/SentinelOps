@@ -1151,6 +1151,108 @@ def _query(request, statement: str, params: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# JOBS REST API FALLBACK
+# ---------------------------------------------------------------------------
+
+# Reading system.lakeflow needs USE CATALOG / USE SCHEMA / SELECT granted
+# by a metastore admin. When the viewer doesn't have those, fall back to
+# the Jobs REST API with the viewer's own token - it only returns jobs and
+# runs the viewer can already see through job ACLs, so no grants needed.
+#
+# runs/list caps `limit` at 25 per page and every page is its own HTTP
+# round-trip, so the fallback is bounded well below MAX_RUNS.
+REST_MAX_RUNS = 1000
+_REST_PAGE_SIZE = 25
+
+
+def _with_rest_fallback(what: str, primary, fallback):
+    """Run the system-table query; on any failure, use the REST fallback."""
+    try:
+        return primary()
+    except Exception as e:
+        first_line = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+        logger.info(
+            "system.lakeflow unavailable for %s (%s) - using Jobs REST API",
+            what,
+            first_line,
+        )
+        return fallback()
+
+
+def _ms_to_utc(ms) -> datetime | None:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc) if ms else None
+
+
+def _rest_job_runs(days: int) -> list[dict]:
+    from databricks_client import rest_get_all
+
+    start_from = int(
+        (datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000
+    )
+    runs = rest_get_all(
+        "/api/2.1/jobs/runs/list",
+        "runs",
+        params={
+            "completed_only": "true",
+            "start_time_from": start_from,
+            "limit": _REST_PAGE_SIZE,
+        },
+        max_pages=REST_MAX_RUNS // _REST_PAGE_SIZE,
+    )
+
+    mapped = []
+    for run in runs:
+        state = run.get("state") or {}
+        result_state = state.get("result_state")
+        if not result_state:
+            continue
+
+        # runs/list reports the termination code under status, not state.
+        termination = (run.get("status") or {}).get("termination_details") or {}
+
+        mapped.append(
+            {
+                "job_id": str(run.get("job_id")),
+                "run_id": str(run.get("run_id")),
+                "result_state": result_state,
+                "period_start_time": _ms_to_utc(run.get("start_time")),
+                "period_end_time": _ms_to_utc(run.get("end_time")),
+                "termination_code": termination.get("code") or result_state,
+            }
+        )
+
+    return mapped
+
+
+def _rest_running_count() -> int:
+    from databricks_client import rest_get_all
+
+    runs = rest_get_all(
+        "/api/2.1/jobs/runs/list",
+        "runs",
+        params={"active_only": "true", "limit": _REST_PAGE_SIZE},
+    )
+    return len(runs)
+
+
+def _rest_job_registry() -> dict[int, dict]:
+    """Unlike system.lakeflow.jobs this has no deleted jobs, so runs of a
+    deleted job fall back to the "job-<id>" name."""
+    from databricks_client import rest_get_all
+
+    jobs = rest_get_all("/api/2.1/jobs/list", "jobs", params={"limit": 100})
+
+    return {
+        int(job["job_id"]): {
+            "name": (job.get("settings") or {}).get("name") or f"job-{job['job_id']}",
+            "tags": (job.get("settings") or {}).get("tags") or {},
+        }
+        for job in jobs
+        if job.get("job_id") is not None
+    }
+
+
+# ---------------------------------------------------------------------------
 # JOB RUNS
 # ---------------------------------------------------------------------------
 
@@ -1199,14 +1301,11 @@ def fetch_job_runs(request=None, days: int = 30) -> list[dict]:
         days = request
         request = None  # it was never a Request; don't pass it downstream
 
-    try:
-        params = {"days": int(days), **_workspace_params()}
-        rows = _cached(
-            (viewer_id(request), "runs", int(days)),
-            lambda: _query(request, _RUNS_SQL, params),
-        )
+    params = {"days": int(days), **_workspace_params()}
 
-        mapped = [
+    def _from_system_table() -> list[dict]:
+        rows = _query(request, _RUNS_SQL, params)
+        return [
             {
                 "job_id": str(r["job_id"]),
                 "run_id": str(r["run_id"]),
@@ -1220,8 +1319,16 @@ def fetch_job_runs(request=None, days: int = 30) -> list[dict]:
             for r in rows
         ]
 
+    try:
+        mapped = _cached(
+            (viewer_id(request), "runs", int(days)),
+            lambda: _with_rest_fallback(
+                "job runs", _from_system_table, lambda: _rest_job_runs(int(days))
+            ),
+        )
+
         logger.info(
-            "Fetched %d completed job runs from system.lakeflow (%d day window)",
+            "Fetched %d completed job runs (%d day window)",
             len(mapped),
             days,
         )
@@ -1230,7 +1337,7 @@ def fetch_job_runs(request=None, days: int = 30) -> list[dict]:
 
     except Exception:
         logger.warning(
-            "Could not fetch job runs from system.lakeflow",
+            "Could not fetch job runs from system.lakeflow or Jobs REST API",
             exc_info=True,
         )
 
@@ -1266,12 +1373,17 @@ def fetch_running_job_count(request=None) -> int:
     as "recently running" rather than a real-time gauge. Surface that in
     the UI if the stat card implies otherwise.
     """
+    def _from_system_table() -> int:
+        rows = _query(request, _RUNNING_SQL, _workspace_params())
+        return int(rows[0]["running_count"]) if rows else 0
+
     try:
-        rows = _cached(
+        count = _cached(
             (viewer_id(request), "running"),
-            lambda: _query(request, _RUNNING_SQL, _workspace_params()),
+            lambda: _with_rest_fallback(
+                "running count", _from_system_table, _rest_running_count
+            ),
         )
-        count = int(rows[0]["running_count"]) if rows else 0
 
         logger.info("%d job runs currently in flight", count)
 
@@ -1279,7 +1391,7 @@ def fetch_running_job_count(request=None) -> int:
 
     except Exception:
         logger.warning(
-            "Could not count active job runs from system.lakeflow",
+            "Could not count active job runs from system.lakeflow or Jobs REST API",
             exc_info=True,
         )
 
@@ -1318,12 +1430,8 @@ def fetch_job_registry(request=None) -> dict[int, dict]:
 
         {job_id: {"name": "...", "tags": {...}}}
     """
-    try:
-        rows = _cached(
-            (viewer_id(request), "registry"),
-            lambda: _query(request, _REGISTRY_SQL, _workspace_params()),
-        )
-
+    def _from_system_table() -> dict[int, dict]:
+        rows = _query(request, _REGISTRY_SQL, _workspace_params())
         registry: dict[int, dict] = {}
 
         for r in rows:
@@ -1337,16 +1445,23 @@ def fetch_job_registry(request=None) -> dict[int, dict]:
                 "tags": _as_tag_dict(r.get("tags")),
             }
 
-        logger.info(
-            "Fetched %d jobs from system.lakeflow.jobs",
-            len(registry),
+        return registry
+
+    try:
+        registry = _cached(
+            (viewer_id(request), "registry"),
+            lambda: _with_rest_fallback(
+                "job registry", _from_system_table, _rest_job_registry
+            ),
         )
+
+        logger.info("Fetched %d jobs for registry", len(registry))
 
         return registry
 
     except Exception:
         logger.warning(
-            "Could not fetch job registry from system.lakeflow",
+            "Could not fetch job registry from system.lakeflow or Jobs REST API",
             exc_info=True,
         )
 
