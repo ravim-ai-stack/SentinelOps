@@ -1156,8 +1156,13 @@ def _query(request, statement: str, params: dict) -> list[dict]:
 
 # Reading system.lakeflow needs USE CATALOG / USE SCHEMA / SELECT granted
 # by a metastore admin. When the viewer doesn't have those, fall back to
-# the Jobs REST API with the viewer's own token - it only returns jobs and
-# runs the viewer can already see through job ACLs, so no grants needed.
+# the Jobs REST API.
+#
+# SECURITY: these calls use the app's SERVICE PRINCIPAL, not the viewer.
+# Databricks Apps user authorization has no Jobs scope, so the forwarded
+# viewer token gets 403 from every Jobs endpoint. As a deliberate product
+# decision, every viewer sees all jobs/runs the service principal can see,
+# regardless of their own job ACLs.
 #
 # runs/list caps `limit` at 25 per page and every page is its own HTTP
 # round-trip, so the fallback is bounded well below MAX_RUNS.
@@ -1198,6 +1203,7 @@ def _rest_job_runs(days: int) -> list[dict]:
             "limit": _REST_PAGE_SIZE,
         },
         max_pages=REST_MAX_RUNS // _REST_PAGE_SIZE,
+        use_sp=True,
     )
 
     mapped = []
@@ -1231,6 +1237,7 @@ def _rest_running_count() -> int:
         "/api/2.1/jobs/runs/list",
         "runs",
         params={"active_only": "true", "limit": _REST_PAGE_SIZE},
+        use_sp=True,
     )
     return len(runs)
 
@@ -1240,7 +1247,9 @@ def _rest_job_registry() -> dict[int, dict]:
     deleted job fall back to the "job-<id>" name."""
     from databricks_client import rest_get_all
 
-    jobs = rest_get_all("/api/2.1/jobs/list", "jobs", params={"limit": 100})
+    jobs = rest_get_all(
+        "/api/2.1/jobs/list", "jobs", params={"limit": 100}, use_sp=True
+    )
 
     return {
         int(job["job_id"]): {
@@ -1591,12 +1600,12 @@ def fetch_run_detail(request, run_id: int | str) -> tuple[dict, list[dict]]:
 # ---------------------------------------------------------------------------
 
 def fetch_jobs(request=None) -> list[dict]:
-    """Fetch jobs via REST API (respects job ACLs, no system.lakeflow grants needed)."""
+    """Fetch jobs via REST API as the service principal (no system.lakeflow
+    grants needed). See JOBS REST API FALLBACK: viewer tokens get 403."""
     from databricks_client import rest_get_all
-    
+
     try:
-        # REST API call with user token (use_sp defaults to False)
-        jobs = rest_get_all("/api/2.1/jobs/list", "jobs")
+        jobs = rest_get_all("/api/2.1/jobs/list", "jobs", use_sp=True)
         
         return [
             {
