@@ -99,13 +99,10 @@ functions directly from each panel file, rather than duplicated here.
 
 NOTE ON AUTHENTICATION
 
-    fetch_top_catalogs_by_usage() reads system.access.table_lineage, which
-    the app's service principal cannot see - granting it needs metastore
-    admin on the `system` catalog, which we don't have. So that one query
-    runs with the logged-in viewer's own forwarded token via viewer_sql,
-    the same way job_service.py reads system.lakeflow.
-
-    Everything else here still runs as the app's service principal.
+    fetch_top_catalogs_by_usage() reads from a pre-aggregated table
+    (uc_governance.sentinelops.catalog_usage_daily) that mirrors
+    system.access.table_lineage. This avoids needing metastore-admin
+    grants on the `system` catalog. All viewers see the same data.
 """
 
 import logging
@@ -117,7 +114,6 @@ from fastapi import Request
 from cache import ttl_cache
 from databricks_client import run_query
 from grants_service import _is_broad, _is_sensitive
-from viewer_sql import run_query_as_viewer, viewer_id, viewer_token
 
 logger = logging.getLogger("sentinelops.dashboard")
 
@@ -161,33 +157,20 @@ def compute_access_risk_by_level(grants: list[dict]) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# CATALOG USAGE  (viewer-scoped)
+# CATALOG USAGE  (service-principal-scoped)
 # ---------------------------------------------------------------------------
 
 # Not using @ttl_cache here: this function takes a Request, which isn't a
-# usable cache key, and results are viewer-scoped so the key must include
-# the viewer's identity - two users may be entitled to different lineage
-# rows, and a key without it would serve one user's data to another.
+# usable cache key. Results are the same for all viewers since queries
+# run as the app's service principal.
 _lineage_cache: dict = {}
 _lineage_lock = threading.Lock()
 
 _LINEAGE_SQL = """
-    SELECT cat, sum(n) AS count FROM (
-      SELECT source_table_catalog AS cat, count(*) AS n
-      FROM system.access.table_lineage
-      WHERE source_table_catalog IS NOT NULL
-        AND source_table_catalog != 'system'
-        AND event_date >= current_date() - INTERVAL {days} DAYS
-      GROUP BY source_table_catalog
-      UNION ALL
-      SELECT target_table_catalog AS cat, count(*) AS n
-      FROM system.access.table_lineage
-      WHERE target_table_catalog IS NOT NULL
-        AND target_table_catalog != 'system'
-        AND event_date >= current_date() - INTERVAL {days} DAYS
-      GROUP BY target_table_catalog
-    )
-    GROUP BY cat
+    SELECT catalog_name AS cat, sum(access_count) AS count
+    FROM uc_governance.sentinelops.catalog_usage_daily
+    WHERE event_date >= current_date() - INTERVAL {days} DAYS
+    GROUP BY catalog_name
     ORDER BY count DESC
     LIMIT {limit}
 """
@@ -203,11 +186,11 @@ def fetch_top_catalogs_by_usage(
     Excludes Databricks' own 'system' catalog, which otherwise dominates
     every window from internal jobs/monitoring rather than real usage.
 
-    Runs as the logged-in viewer, because the app's service principal has
-    no USE SCHEMA on system.access. Falls back to an empty list if
-    lineage isn't readable - which is also what a viewer without their
-    own grant will see."""
-    key = (viewer_id(request), int(days), int(limit))
+    Runs as the app's service principal, querying a pre-aggregated table
+    (uc_governance.sentinelops.catalog_usage_daily) instead of system.access
+    .table_lineage directly. This avoids needing metastore-admin grants on
+    the `system` catalog. Falls back to an empty list if the table is empty."""
+    key = (int(days), int(limit))
     now = time.monotonic()
 
     with _lineage_lock:
@@ -220,11 +203,10 @@ def fetch_top_catalogs_by_usage(
     sql = _LINEAGE_SQL.format(days=int(days), limit=int(limit))
 
     try:
-        token = viewer_token(request)
-        rows = run_query_as_viewer(token, sql) if token else run_query(sql)
+        rows = run_query(sql)
     except Exception:
         logger.warning(
-            "system.access.table_lineage not readable for this viewer",
+            "uc_governance.sentinelops.catalog_usage_daily not readable",
             exc_info=True,
         )
         return []
