@@ -131,16 +131,29 @@ def debug_auth(request: Request):
     except Exception as e:
         sp_error = str(e)
 
+    # Test SQL query with user token (SHOW CATALOGS)
+    sql_catalogs = []
+    sql_error = None
+    if token:
+        try:
+            from databricks_client import run_query
+            rows = run_query("SHOW CATALOGS")
+            if rows:
+                first_key = list(rows[0].keys())[0]
+                sql_catalogs = [r.get(first_key, "") for r in rows]
+        except Exception as e:
+            sql_error = str(e)
+
     return {
         "has_user_token": token is not None,
         "token_preview": token[:20] + "..." if token else None,
         "header_present": "x-forwarded-access-token" in request.headers,
         "jwt_subject": jwt_payload.get("sub") if jwt_payload else None,
-        "jwt_iss": jwt_payload.get("iss") if jwt_payload else None,
         "jwt_scope": jwt_payload.get("scope") if jwt_payload else None,
-        "jwt_full": jwt_payload,
         "user_token_catalogs": [c.get("name") for c in user_catalogs],
         "user_token_error": user_error,
+        "sql_catalogs": sql_catalogs,
+        "sql_error": sql_error,
         "sp_catalogs": sp_catalogs,
         "sp_error": sp_error,
     }
