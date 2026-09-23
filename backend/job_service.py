@@ -1476,18 +1476,24 @@ def fetch_run_detail(request, run_id: int | str) -> tuple[dict, list[dict]]:
 # ---------------------------------------------------------------------------
 
 def fetch_jobs(request=None) -> list[dict]:
-    """Flat list form of the registry, for the Jobs page."""
-    registry = fetch_job_registry(request)
-
-    return [
-        {
-            "job_id": str(job_id),
-            "name": info["name"],
-            "tags": info["tags"],
-        }
-        for job_id, info in registry.items()
-    ]
-
+    """Fetch jobs via REST API (respects job ACLs, no system.lakeflow grants needed)."""
+    from databricks_client import rest_get_all
+    
+    try:
+        # REST API call with user token (use_sp defaults to False)
+        jobs = rest_get_all("/api/2.1/jobs/list", "jobs")
+        
+        return [
+            {
+                "job_id": str(job["job_id"]),
+                "name": job.get("settings", {}).get("name", f"job-{job['job_id']}"),
+                "tags": job.get("settings", {}).get("tags", {}),
+            }
+            for job in jobs
+        ]
+    except Exception:
+        logger.warning("Could not fetch jobs via REST API", exc_info=True)
+        return []
 
 # ---------------------------------------------------------------------------
 # FORMATTING HELPERS
