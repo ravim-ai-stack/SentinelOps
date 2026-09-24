@@ -100,7 +100,7 @@ functions directly from each panel file, rather than duplicated here.
 NOTE ON AUTHENTICATION
 
     fetch_top_catalogs_by_usage() reads from a pre-aggregated table
-    (sentienl_ops_jobs.sentinelops.catalog_usage_daily) that mirrors
+    (uc_governance.sentinelops.catalog_usage_daily) that mirrors
     system.access.table_lineage. This avoids needing metastore-admin
     grants on the `system` catalog. All viewers see the same data.
 """
@@ -168,7 +168,7 @@ _lineage_lock = threading.Lock()
 
 _LINEAGE_SQL = """
     SELECT catalog_name AS cat, sum(access_count) AS count
-    FROM sentienl_ops_jobs.sentinelops.catalog_usage_daily
+    FROM uc_governance.sentinelops.catalog_usage_daily
     WHERE event_date >= current_date() - INTERVAL {days} DAYS
     GROUP BY catalog_name
     ORDER BY count DESC
@@ -187,7 +187,7 @@ def fetch_top_catalogs_by_usage(
     every window from internal jobs/monitoring rather than real usage.
 
     Runs as the app's service principal, querying a pre-aggregated table
-    (sentienl_ops_jobs.sentinelops.catalog_usage_daily) instead of system.access
+    (uc_governance.sentinelops.catalog_usage_daily) instead of system.access
     .table_lineage directly. This avoids needing metastore-admin grants on
     the `system` catalog. Falls back to an empty list if the table is empty."""
     key = (int(days), int(limit))
@@ -206,7 +206,7 @@ def fetch_top_catalogs_by_usage(
         rows = run_query(sql)
     except Exception:
         logger.warning(
-            "sentienl_ops_jobs.sentinelops.catalog_usage_daily not readable",
+            "uc_governance.sentinelops.catalog_usage_daily not readable",
             exc_info=True,
         )
         return []
