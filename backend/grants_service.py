@@ -212,6 +212,18 @@ service principal can access it without requiring the viewer to have
 SCIM read permissions (which only workspace admins have).
 """
 
+"""
+Shared SCIM (users/groups) and Unity Catalog grant primitives used by both
+the Access governance and Data security services — resolving who can reach
+a given catalog/schema/table, and whether a grant counts as broad or
+sensitive.
+
+SCIM data (users, groups) is read from pre-aggregated Delta tables in
+uc_governance.sentinelops instead of the SCIM REST API, so the app's
+service principal can access it without requiring the viewer to have
+SCIM read permissions (which only workspace admins have).
+"""
+
 import logging
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -235,8 +247,8 @@ def fetch_scim_users() -> list[dict]:
     displayName, active."""
     return run_query(
         """
-        SELECT user_id AS id, user_name AS "userName",
-               display_name AS "displayName", active
+        SELECT user_id AS id, user_name AS userName,
+               display_name AS displayName, active
         FROM uc_governance.sentinelops.scim_users
         """
     )
@@ -249,7 +261,7 @@ def fetch_scim_groups() -> list[dict]:
     members (list of {value, display})."""
     rows = run_query(
         """
-        SELECT group_id AS id, display_name AS "displayName", members_json
+        SELECT group_id AS id, display_name AS displayName, members_json
         FROM uc_governance.sentinelops.scim_groups
         """
     )
@@ -417,4 +429,3 @@ def resolve_table_access_detail(
     )
     users = sorted(g for g in grantees if g not in group_member_count)
     return {"groups": groups, "users": users}
-

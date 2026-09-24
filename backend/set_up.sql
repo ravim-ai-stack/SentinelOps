@@ -369,14 +369,14 @@ LIMIT 5;
 --   Replace fetch_scim_users():
 --     OLD: return scim_get_all("/api/2.0/preview/scim/v2/Users")
 --     NEW: return run_query("""
---          SELECT user_id AS id, user_name AS "userName",
---                 display_name AS "displayName", active
+--          SELECT user_id AS id, user_name AS userName,
+--                 display_name AS displayName, active
 --          FROM <CATALOG>.sentinelops.scim_users """)
 --
 --   Replace fetch_scim_groups():
 --     OLD: return scim_get_all("/api/2.0/preview/scim/v2/Groups")
 --     NEW: rows = run_query("""
---              SELECT group_id AS id, display_name AS "displayName",
+--              SELECT group_id AS id, display_name AS displayName,
 --                     members_json
 --              FROM <CATALOG>.sentinelops.scim_groups """)
 --          for r in rows:
