@@ -3946,7 +3946,7 @@ def _query(request, statement: str, params: dict) -> list[dict]:
     """
     Run a query as the app's service principal.
 
-    Queries read from pre-aggregated tables in uc_governance.sentinelops
+    Queries read from pre-aggregated tables in sentienl_ops_jobs.sentinelops
     instead of system.lakeflow directly, so the SP only needs SELECT on
     those tables (granted by the catalog owner), not metastore admin.
     """
@@ -4080,7 +4080,7 @@ SELECT
     MAX(period_end_time)                          AS period_end_time,
     MAX_BY(result_state,     period_end_time)     AS result_state,
     MAX_BY(termination_code, period_end_time)     AS termination_code
-FROM uc_governance.sentinelops.job_runs
+FROM sentienl_ops_jobs.sentinelops.job_runs
 WHERE period_start_time >= dateadd(DAY, -CAST(:days AS INT), current_timestamp())
     {_workspace_clause()}
 GROUP BY job_id, run_id
@@ -4168,7 +4168,7 @@ FROM (
     SELECT
         run_id,
         MAX_BY(result_state, period_end_time) AS result_state
-    FROM uc_governance.sentinelops.job_runs
+    FROM sentienl_ops_jobs.sentinelops.job_runs
     WHERE period_start_time >= dateadd(DAY, -2, current_timestamp())
         {_workspace_clause()}
     GROUP BY run_id
@@ -4219,7 +4219,7 @@ def fetch_running_job_count(request=None) -> int:
 # still resolve to a name instead of falling back to "job-<id>".
 _REGISTRY_SQL = f"""
 SELECT job_id, name, tags
-FROM uc_governance.sentinelops.job_registry
+FROM sentienl_ops_jobs.sentinelops.job_registry
 WHERE 1 = 1
     {_workspace_clause()}
 """
@@ -4282,7 +4282,7 @@ SELECT
     MAX_BY(result_state,     period_end_time)     AS result_state,
     MAX_BY(termination_code, period_end_time)     AS termination_code,
     MAX_BY(run_name,         period_end_time)     AS run_name
-FROM uc_governance.sentinelops.job_runs
+FROM sentienl_ops_jobs.sentinelops.job_runs
 WHERE run_id = :run_id
     {_workspace_clause()}
 GROUP BY job_id, run_id
@@ -4299,7 +4299,7 @@ SELECT
     MAX(period_end_time)                          AS period_end_time,
     MAX_BY(result_state,     period_end_time)     AS result_state,
     MAX_BY(termination_code, period_end_time)     AS termination_code
-FROM uc_governance.sentinelops.job_task_runs
+FROM sentienl_ops_jobs.sentinelops.job_task_runs
 WHERE job_run_id = :run_id
     {_workspace_clause()}
 GROUP BY task_key
