@@ -331,18 +331,13 @@ def build_full_tree() -> list[dict]:
         })
         cat["schemas"].append(bucket)
 
-    # Only enrich catalogs that already have visible schemas (from schemata,
-    # which is permission-filtered). system.information_schema.catalogs
-    # returns ALL catalogs when the user has READ METADATA / BROWSE on the
-    # metastore, even for catalogs they can't actually USE. Schemata, on the
-    # other hand, only returns schemas the user has USE SCHEMA or BROWSE on.
-    # So filtering by "has at least one visible schema" ensures users only
-    # see catalogs they can actually access, regardless of metastore-level
-    # READ METADATA grants.
     for catalog_name, cat_info in catalogs.items():
-        if catalog_name in catalog_buckets:
-            catalog_buckets[catalog_name]["owner"] = cat_info.get("catalog_owner")
-            catalog_buckets[catalog_name]["tags"] = catalog_tags.get(catalog_name, [])
+        catalog_buckets.setdefault(catalog_name, {
+            "catalog": catalog_name,
+            "owner": cat_info.get("catalog_owner"),
+            "schemas": [],
+            "tags": catalog_tags.get(catalog_name, []),
+        })
 
     tree = list(catalog_buckets.values())
     for cat in tree:
