@@ -9,7 +9,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from cache import ttl_cache
-from databricks_client import run_query, scim_get_all
+from databricks_client import run_query, scim_get_all, preserve_context
 
 access_logger = logging.getLogger("sentinelops.access")
 
@@ -98,24 +98,29 @@ def fetch_grants() -> list[dict]:
     so they're run concurrently, on the shared _grants_pool, rather than one
     after another."""
     pool = _grants_pool
+    # CRITICAL: Wrap with preserve_context() so the user token ContextVar is
+    # propagated to worker threads. Without this, worker threads see
+    # get_user_token() = None, fall back to the service principal, and
+    # system.information_schema.*_privileges returns only the SP's limited
+    # view — resulting in empty access governance panels.
     catalog_f = pool.submit(
-        run_query, "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
+        preserve_context(run_query), "SELECT grantee, catalog_name, privilege_type FROM system.information_schema.catalog_privileges"
     )
     schema_f = pool.submit(
-        run_query,
+        preserve_context(run_query),
         """
         SELECT grantee, catalog_name, schema_name, privilege_type
         FROM system.information_schema.schema_privileges
         """,
     )
     table_f = pool.submit(
-        run_query,
+        preserve_context(run_query),
         """
         SELECT grantee, table_catalog, table_schema, table_name, privilege_type
         FROM system.information_schema.table_privileges
         """,
     )
-    volume_f = pool.submit(_fetch_volume_privileges)
+    volume_f = pool.submit(preserve_context(_fetch_volume_privileges))
 
     catalog_rows = catalog_f.result()
     schema_rows = schema_f.result()
@@ -136,14 +141,12 @@ def fetch_grants() -> list[dict]:
     for r in table_rows:
         grants.append({
             "grantee": r["grantee"], "level": "TABLE",
-            "object": f"{r['table_catalog']}.{r['table_schema']}.{r['table_name']}",
-            "privilege": r["privilege_type"],
+            "object": f"{r['table_catalog']}.{r['table_schema']}.{r['table_name']}", "privilege": r["privilege_type"],
         })
     for r in volume_rows:
         grants.append({
             "grantee": r["grantee"], "level": "VOLUME",
-            "object": f"{r['volume_catalog']}.{r['volume_schema']}.{r['volume_name']}",
-            "privilege": r["privilege_type"],
+            "object": f"{r['volume_catalog']}.{r['volume_schema']}.{r['volume_name']}", "privilege": r["privilege_type"],
         })
     return grants
 
