@@ -417,4 +417,3 @@ def resolve_table_access_detail(
     )
     users = sorted(g for g in grantees if g not in group_member_count)
     return {"groups": groups, "users": users}
-
