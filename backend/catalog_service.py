@@ -348,6 +348,17 @@ def build_full_tree() -> list[dict]:
     return tree
 
 
+def _is_system_owner(owner: Optional[str]) -> bool:
+    # Matches "System user", "system_user", "SYSTEM USER", etc.
+    return bool(owner) and owner.lower().replace("_", " ").strip() == "system user"
+
+
+def exclude_system_catalogs(tree: list[dict]) -> list[dict]:
+    """Drop Databricks-managed catalogs (e.g. `system`, `samples`) whose
+    owner is the built-in "System user"."""
+    return [c for c in tree if not _is_system_owner(c.get("owner"))]
+
+
 def _match(name: Optional[str], needle: str) -> bool:
     return bool(name) and needle in name.lower()
 
