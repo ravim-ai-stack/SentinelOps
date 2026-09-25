@@ -3942,6 +3942,84 @@ def _workspace_params() -> dict:
     return {"workspace_id": WORKSPACE_ID} if WORKSPACE_ID else {}
 
 
+# ---------------------------------------------------------------------------
+# TAG + JOB-NAME BASED JOB ACCESS CONTROL
+# ---------------------------------------------------------------------------
+# Jobs are restricted based on tags AND job names. A table
+# (uc_governance.sentinelops.user_job_tags, columns: user_email, tag,
+# job_name) maps each user to the tag values and job names they are
+# allowed to see. A job is shown if EITHER:
+#   - any of its tag values matches one of the user's allowed tags, OR
+#   - its name matches one of the user's allowed job names (fallback when
+#     a job has no tags or its tags don't match)
+# If a user has NO entries in the table, no restriction is applied
+# (backward compatible — they see all jobs, same as today).
+
+USER_TAGS_TABLE = "uc_governance.sentinelops.user_job_tags"
+
+
+def _get_access_filter(request) -> tuple[set[str], set[str]] | None:
+    """Return (allowed_tags, allowed_job_names) for the current user,
+    or None if no restriction (user has no entries in the mapping table)."""
+    user = viewer_id(request)
+    if not user:
+        return None
+
+    def _fetch():
+        try:
+            rows = _query(
+                request,
+                f"SELECT tag, job_name FROM {USER_TAGS_TABLE} WHERE user_email = :user_email",
+                {"user_email": user},
+            )
+            if not rows:
+                return None  # No entries → no restriction (backward compatible)
+            allowed_tags = {r["tag"] for r in rows if r.get("tag")}
+            allowed_job_names = {r["job_name"] for r in rows if r.get("job_name")}
+            return (allowed_tags, allowed_job_names)
+        except Exception:
+            logger.warning(
+                "Could not fetch access filter from %s for %s",
+                USER_TAGS_TABLE, user, exc_info=True,
+            )
+            return None  # On error, don't restrict
+
+    return _cached((user, "access_filter"), _fetch)
+
+
+def _filter_jobs_by_access(
+    jobs: dict[int, dict] | list[dict],
+    access_filter: tuple[set[str], set[str]] | None,
+    is_registry: bool = False,
+) -> dict[int, dict] | list[dict]:
+    """Filter a job registry (dict keyed by job_id) or job list (list of
+    dicts) by allowed tags AND job names. None = no restriction.
+    A job is kept if any of its tag values intersects with allowed_tags,
+    OR its name is in allowed_job_names (fallback for jobs without tags)."""
+    if access_filter is None:
+        return jobs
+    allowed_tags, allowed_job_names = access_filter
+
+    def _job_allowed(info: dict) -> bool:
+        job_tag_values = set(info.get("tags", {}).values())
+        job_name = info.get("name", "")
+        return bool(job_tag_values & allowed_tags) or (job_name in allowed_job_names)
+
+    if is_registry:
+        return {jid: info for jid, info in jobs.items() if _job_allowed(info)}
+    return [job for job in jobs if _job_allowed(job)]
+
+
+def _get_allowed_job_ids(request) -> set[int] | None:
+    """Return the set of job_ids the current user is allowed to see,
+    or None if no restriction. Uses the filtered job registry."""
+    access_filter = _get_access_filter(request)
+    if access_filter is None:
+        return None
+    registry = fetch_job_registry(request)
+    return set(registry.keys()) if registry else set()
+
+
 def _query(request, statement: str, params: dict) -> list[dict]:
     """
     Run a query as the app's service principal.
@@ -4139,6 +4217,11 @@ def fetch_job_runs(request=None, days: int = 30) -> list[dict]:
             ),
         )
 
+        # Filter by user's allowed job tags
+        allowed_ids = _get_allowed_job_ids(request)
+        if allowed_ids is not None:
+            mapped = [r for r in mapped if int(r["job_id"]) in allowed_ids]
+
         logger.info(
             "Fetched %d completed job runs (%d day window)",
             len(mapped),
@@ -4186,7 +4269,29 @@ def fetch_running_job_count(request=None) -> int:
     the UI if the stat card implies otherwise.
     """
     def _from_system_table() -> int:
-        rows = _query(request, _RUNNING_SQL, _workspace_params())
+        # Build SQL at call time to optionally filter by allowed job_ids
+        allowed_ids = _get_allowed_job_ids(request)
+        if allowed_ids is not None:
+            if not allowed_ids:
+                return 0  # No allowed jobs → 0 running
+            job_filter = f"AND job_id IN ({','.join(str(i) for i in allowed_ids)})"
+        else:
+            job_filter = ""
+        sql = f"""
+        SELECT COUNT(*) AS running_count
+        FROM (
+            SELECT
+                run_id,
+                MAX_BY(result_state, period_end_time) AS result_state
+            FROM uc_governance.sentinelops.job_runs
+            WHERE period_start_time >= dateadd(DAY, -2, current_timestamp())
+                {_workspace_clause()}
+                {job_filter}
+            GROUP BY run_id
+        )
+        WHERE result_state IS NULL
+        """
+        rows = _query(request, sql, _workspace_params())
         return int(rows[0]["running_count"]) if rows else 0
 
     try:
@@ -4255,6 +4360,10 @@ def fetch_job_registry(request=None) -> dict[int, dict]:
                 "job registry", _from_system_table, _rest_job_registry
             ),
         )
+
+        # Filter by user's allowed tags and job names
+        access_filter = _get_access_filter(request)
+        registry = _filter_jobs_by_access(registry, access_filter, is_registry=True)
 
         logger.info("Fetched %d jobs for registry", len(registry))
 
@@ -4337,6 +4446,14 @@ def fetch_run_detail(request, run_id: int | str) -> tuple[dict, list[dict]]:
         )
 
     r = rows[0]
+
+    # Check if the user is allowed to see this job
+    allowed_ids = _get_allowed_job_ids(request)
+    if allowed_ids is not None and int(r["job_id"]) not in allowed_ids:
+        raise LookupError(
+            f"run {run_id} belongs to a job the current user does not have access to"
+        )
+
     result_state = r.get("result_state")
     termination_code = r.get("termination_code")
 
@@ -4399,7 +4516,7 @@ def fetch_jobs(request=None) -> list[dict]:
     try:
         jobs = rest_get_all("/api/2.1/jobs/list", "jobs", use_sp=True)
         
-        return [
+        mapped = [
             {
                 "job_id": str(job["job_id"]),
                 "name": job.get("settings", {}).get("name", f"job-{job['job_id']}"),
@@ -4407,6 +4524,12 @@ def fetch_jobs(request=None) -> list[dict]:
             }
             for job in jobs
         ]
+
+        # Filter by user's allowed tags and job names
+        access_filter = _get_access_filter(request)
+        mapped = _filter_jobs_by_access(mapped, access_filter, is_registry=False)
+
+        return mapped
     except Exception:
         logger.warning("Could not fetch jobs via REST API", exc_info=True)
         return []
